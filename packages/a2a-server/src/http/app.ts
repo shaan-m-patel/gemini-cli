@@ -21,8 +21,15 @@ import type { AgentSettings } from '../types.js';
 import { GCSTaskStore, NoOpTaskStore } from '../persistence/gcs.js';
 import { CoderAgentExecutor } from '../agent/executor.js';
 import { requestStorage } from './requestStorage.js';
-import { loadConfig, loadEnvironment, setTargetDir } from '../config/config.js';
+import {
+  isOperatorTrustedWorkspace,
+  loadConfig,
+  loadEnvironment,
+  setTargetDir,
+  UntrustedWorkspaceError,
+} from '../config/config.js';
 import { loadSettings } from '../config/settings.js';
+import { requireCoderAgentAuth } from './auth.js';
 import { loadExtensions } from '../config/extension.js';
 import { commandRegistry } from '../commands/command-registry.js';
 import {
@@ -158,7 +165,9 @@ export async function createApp() {
     // Load the server configuration once on startup.
     const workspaceRoot = setTargetDir(undefined);
     loadEnvironment();
-    const settings = loadSettings(workspaceRoot);
+    const settings = loadSettings(workspaceRoot, {
+      includeWorkspaceSettings: isOperatorTrustedWorkspace(workspaceRoot),
+    });
     const extensions = loadExtensions(workspaceRoot);
     const config = await loadConfig(
       settings,
@@ -203,9 +212,12 @@ export async function createApp() {
     expressApp.use((req, res, next) => {
       requestStorage.run({ req }, next);
     });
+    expressApp.use(requireCoderAgentAuth);
 
     const appBuilder = new A2AExpressApp(requestHandler);
-    expressApp = appBuilder.setupRoutes(expressApp, '');
+    expressApp = appBuilder.setupRoutes(expressApp, '', [
+      requireCoderAgentAuth,
+    ]);
     expressApp.use(express.json());
 
     expressApp.post('/tasks', async (req, res) => {
@@ -230,7 +242,8 @@ export async function createApp() {
           error instanceof Error
             ? error.message
             : 'Unknown error creating task';
-        res.status(500).send({ error: errorMessage });
+        const status = error instanceof UntrustedWorkspaceError ? 400 : 500;
+        res.status(status).send({ error: errorMessage });
       }
     });
 

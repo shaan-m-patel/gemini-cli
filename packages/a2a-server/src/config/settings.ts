@@ -58,7 +58,10 @@ export interface CheckpointingSettings {
  * than `LoadedSettings` (unnecessary since we are not modifying users
  * settings.json).
  */
-export function loadSettings(workspaceDir: string): Settings {
+export function loadSettings(
+  workspaceDir: string,
+  options?: { includeWorkspaceSettings?: boolean },
+): Settings {
   let userSettings: Settings = {};
   let workspaceSettings: Settings = {};
   const settingsErrors: SettingsError[] = [];
@@ -80,15 +83,17 @@ export function loadSettings(workspaceDir: string): Settings {
     });
   }
 
+  const includeWorkspaceSettings = options?.includeWorkspaceSettings !== false;
   const workspaceSettingsPath = path.join(
     workspaceDir,
     GEMINI_DIR,
     'settings.json',
   );
 
-  // Load workspace settings
+  // Load workspace settings only for an operator-trusted workspace. An
+  // untrusted tree must not contribute MCP servers or other project config.
   try {
-    if (fs.existsSync(workspaceSettingsPath)) {
+    if (includeWorkspaceSettings && fs.existsSync(workspaceSettingsPath)) {
       const projectContent = fs.readFileSync(workspaceSettingsPath, 'utf-8');
       // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
       const parsedWorkspaceSettings = JSON.parse(

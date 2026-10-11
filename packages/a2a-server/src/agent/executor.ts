@@ -30,7 +30,12 @@ import {
   getPersistedState,
   setPersistedState,
 } from '../types.js';
-import { loadConfig, loadEnvironment, setTargetDir } from '../config/config.js';
+import {
+  isOperatorTrustedWorkspace,
+  loadConfig,
+  loadEnvironment,
+  setTargetDir,
+} from '../config/config.js';
 import { loadSettings } from '../config/settings.js';
 import { loadExtensions } from '../config/extension.js';
 import { Task } from './task.js';
@@ -92,8 +97,10 @@ export class CoderAgentExecutor implements AgentExecutor {
     taskId: string,
   ): Promise<Config> {
     const workspaceRoot = setTargetDir(agentSettings);
-    loadEnvironment(); // Will override any global env with workspace envs
-    const settings = loadSettings(workspaceRoot);
+    loadEnvironment();
+    const settings = loadSettings(workspaceRoot, {
+      includeWorkspaceSettings: isOperatorTrustedWorkspace(workspaceRoot),
+    });
     const extensions = loadExtensions(workspaceRoot);
     return loadConfig(settings, new SimpleExtensionLoader(extensions), taskId);
   }

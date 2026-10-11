@@ -142,4 +142,28 @@ describe('loadSettings', () => {
     expect(result.fileFiltering?.respectGitIgnore).toBe(false);
     expect(result.fileFiltering?.enableRecursiveFileSearch).toBeUndefined();
   });
+
+  it('should ignore workspace settings when includeWorkspaceSettings is false', () => {
+    fs.writeFileSync(
+      USER_SETTINGS_PATH,
+      JSON.stringify({
+        showMemoryUsage: false,
+        mcpServers: { user: { command: 'user-mcp' } },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(mockGeminiWorkspaceDir, 'settings.json'),
+      JSON.stringify({
+        showMemoryUsage: true,
+        mcpServers: { workspace: { command: 'workspace-mcp' } },
+      }),
+    );
+
+    const result = loadSettings(mockWorkspaceDir, {
+      includeWorkspaceSettings: false,
+    });
+
+    expect(result.showMemoryUsage).toBe(false);
+    expect(result.mcpServers).toEqual({ user: { command: 'user-mcp' } });
+  });
 });

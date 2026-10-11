@@ -38,6 +38,9 @@ import {
 import { MockTool } from '@google/gemini-cli-core/src/test-utils/mock-tool.js';
 import type { Command, CommandContext } from '../commands/types.js';
 
+const TEST_CODER_AGENT_TOKEN = 'test-coder-agent-token';
+process.env['CODER_AGENT_AUTH_TOKEN'] = TEST_CODER_AGENT_TOKEN;
+
 const mockToolConfirmationFn = async () =>
   ({}) as unknown as ToolCallConfirmationDetails;
 
@@ -132,7 +135,9 @@ describe('E2E Tests', () => {
       yield* [{ type: 'content', value: 'Hello how are you?' }];
     });
 
-    const agent = request.agent(app);
+    const agent = request
+      .agent(app)
+      .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
     const res = await agent
       .post('/')
       .send(createStreamMessageRequest('hello', 'a2a-test-message'))
@@ -194,7 +199,9 @@ describe('E2E Tests', () => {
       getTool: vi.fn().mockReturnValue(mockTool),
     });
 
-    const agent = request.agent(app);
+    const agent = request
+      .agent(app)
+      .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
     const res = await agent
       .post('/')
       .send(createStreamMessageRequest('run a tool', 'a2a-tool-test-message'))
@@ -296,7 +303,9 @@ describe('E2E Tests', () => {
       }),
     });
 
-    const agent = request.agent(app);
+    const agent = request
+      .agent(app)
+      .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
     const res = await agent
       .post('/')
       .send(
@@ -455,7 +464,9 @@ describe('E2E Tests', () => {
       }),
     });
 
-    const agent = request.agent(app);
+    const agent = request
+      .agent(app)
+      .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
     const res = await agent
       .post('/')
       .send(
@@ -577,7 +588,9 @@ describe('E2E Tests', () => {
       getTool: vi.fn().mockReturnValue(mockTool),
     });
 
-    const agent = request.agent(app);
+    const agent = request
+      .agent(app)
+      .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
     const res = await agent
       .post('/')
       .send(
@@ -708,7 +721,9 @@ describe('E2E Tests', () => {
       getTool: vi.fn().mockReturnValue(mockTool),
     });
 
-    const agent = request.agent(app);
+    const agent = request
+      .agent(app)
+      .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
     const res = await agent
       .post('/')
       .send(
@@ -811,7 +826,9 @@ describe('E2E Tests', () => {
       ];
     });
 
-    const agent = request.agent(app);
+    const agent = request
+      .agent(app)
+      .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
     const res = await agent
       .post('/')
       .send(createStreamMessageRequest('hello', 'a2a-trace-id-test'))
@@ -866,7 +883,9 @@ describe('E2E Tests', () => {
         .spyOn(commandRegistry, 'getAllCommands')
         .mockReturnValue(mockCommands);
 
-      const agent = request.agent(app);
+      const agent = request
+        .agent(app)
+        .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
       const res = await agent.get('/listCommands').expect(200);
 
       expect(res.body).toEqual({
@@ -913,7 +932,9 @@ describe('E2E Tests', () => {
         .spyOn(commandRegistry, 'getAllCommands')
         .mockReturnValue([cyclicCommand]);
 
-      const agent = request.agent(app);
+      const agent = request
+        .agent(app)
+        .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
       const res = await agent.get('/listCommands').expect(200);
 
       expect(res.body.commands[0].name).toBe('cyclic-command');
@@ -951,7 +972,9 @@ describe('E2E Tests', () => {
       };
       vi.spyOn(commandRegistry, 'get').mockReturnValue(mockExtensionsCommand);
 
-      const agent = request.agent(app);
+      const agent = request
+        .agent(app)
+        .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
       const res = await agent
         .post('/executeCommand')
         .send({ command: 'extensions list', args: [] })
@@ -968,7 +991,9 @@ describe('E2E Tests', () => {
     it('should return 404 for invalid command', async () => {
       vi.spyOn(commandRegistry, 'get').mockReturnValue(undefined);
 
-      const agent = request.agent(app);
+      const agent = request
+        .agent(app)
+        .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
       const res = await agent
         .post('/executeCommand')
         .send({ command: 'invalid command' })
@@ -980,7 +1005,9 @@ describe('E2E Tests', () => {
     });
 
     it('should return 400 for missing command', async () => {
-      const agent = request.agent(app);
+      const agent = request
+        .agent(app)
+        .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
       await agent
         .post('/executeCommand')
         .send({ args: [] })
@@ -990,7 +1017,9 @@ describe('E2E Tests', () => {
     });
 
     it('should return 400 if args is not an array', async () => {
-      const agent = request.agent(app);
+      const agent = request
+        .agent(app)
+        .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
       const res = await agent
         .post('/executeCommand')
         .send({ command: 'extensions.list', args: 'not-an-array' })
@@ -1014,6 +1043,7 @@ describe('E2E Tests', () => {
       delete process.env['CODER_AGENT_WORKSPACE_PATH'];
       const response = await request(app)
         .post('/executeCommand')
+        .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`)
         .send({ command: 'test-command', args: [] });
 
       expect(response.status).toBe(200);
@@ -1034,6 +1064,7 @@ describe('E2E Tests', () => {
       delete process.env['CODER_AGENT_WORKSPACE_PATH'];
       const response = await request(app)
         .post('/executeCommand')
+        .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`)
         .send({ command: 'workspace-command', args: [] });
 
       expect(response.status).toBe(400);
@@ -1056,6 +1087,7 @@ describe('E2E Tests', () => {
       process.env['CODER_AGENT_WORKSPACE_PATH'] = '/tmp/test-workspace';
       const response = await request(app)
         .post('/executeCommand')
+        .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`)
         .send({ command: 'workspace-command', args: [] });
 
       expect(response.status).toBe(200);
@@ -1075,7 +1107,9 @@ describe('E2E Tests', () => {
       };
       vi.spyOn(commandRegistry, 'get').mockReturnValue(mockCommand);
 
-      const agent = request.agent(app);
+      const agent = request
+        .agent(app)
+        .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
       const res = await agent
         .post('/executeCommand')
         .send({ command: 'context-check-command', args: [] })
@@ -1115,7 +1149,9 @@ describe('E2E Tests', () => {
         };
         vi.spyOn(commandRegistry, 'get').mockReturnValue(mockStreamCommand);
 
-        const agent = request.agent(app);
+        const agent = request
+          .agent(app)
+          .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
         agent
           .post('/executeCommand')
           .send({ command: 'stream-test', args: [] })
@@ -1164,7 +1200,9 @@ describe('E2E Tests', () => {
         };
         vi.spyOn(commandRegistry, 'get').mockReturnValue(mockNonStreamCommand);
 
-        const agent = request.agent(app);
+        const agent = request
+          .agent(app)
+          .set('Authorization', `Bearer ${TEST_CODER_AGENT_TOKEN}`);
         const res = await agent
           .post('/executeCommand')
           .send({ command: 'non-stream-test', args: [] })
