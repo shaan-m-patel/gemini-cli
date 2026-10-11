@@ -154,23 +154,13 @@ export class IdeClient {
       return;
     }
 
-    if (connectionConfig) {
-      if (connectionConfig.port) {
-        const connected = await this.establishHttpConnection(
-          connectionConfig.port,
-          authToken,
-        );
-        if (connected) {
-          return;
-        }
-      }
-      if (connectionConfig.stdio) {
-        const connected = await this.establishStdioConnection(
-          connectionConfig.stdio,
-        );
-        if (connected) {
-          return;
-        }
+    if (connectionConfig?.port) {
+      const connected = await this.establishHttpConnection(
+        connectionConfig.port,
+        authToken,
+      );
+      if (connected) {
+        return;
       }
     }
 

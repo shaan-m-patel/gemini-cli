@@ -11,6 +11,7 @@ import { Config, DEFAULT_FILE_FILTERING_OPTIONS } from './config.js';
 import { ExperimentFlags } from '../code_assist/experiments/flagNames.js';
 import { debugLogger } from '../utils/debugLogger.js';
 import { ApprovalMode } from '../policy/types.js';
+import { ideContextStore } from '../ide/ideContext.js';
 import type { HookDefinition } from '../hooks/types.js';
 import { HookType, HookEventName } from '../hooks/types.js';
 import { FileDiscoveryService } from '../services/fileDiscoveryService.js';
@@ -1315,6 +1316,37 @@ describe('Server Config (config.ts)', () => {
 
       expect(mockCoreEvents.emitFeedback).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('isTrustedFolder IDE override', () => {
+  const baseParams: ConfigParameters = {
+    sessionId: 'test',
+    targetDir: '.',
+    debugMode: false,
+    model: 'test-model',
+    cwd: '.',
+    folderTrust: true,
+    trustedFolder: false,
+  };
+
+  afterEach(() => {
+    ideContextStore.clear();
+  });
+
+  it('ignores an IDE trust notification when the folder is explicitly not trusted', () => {
+    const config = new Config({
+      ...baseParams,
+      explicitFolderTrustDenial: true,
+    });
+    ideContextStore.set({ workspaceState: { isTrusted: true } });
+    expect(config.isTrustedFolder()).toBe(false);
+  });
+
+  it('still accepts an IDE trust notification when there is no explicit denial', () => {
+    const config = new Config(baseParams);
+    ideContextStore.set({ workspaceState: { isTrusted: true } });
+    expect(config.isTrustedFolder()).toBe(true);
   });
 });
 

@@ -55,7 +55,7 @@ import { loadSandboxConfig } from './sandboxConfig.js';
 import { resolvePath } from '../utils/resolvePath.js';
 import { RESUME_LATEST } from '../utils/sessionUtils.js';
 
-import { isWorkspaceTrusted } from './trustedFolders.js';
+import { isExplicitDoNotTrust, isWorkspaceTrusted } from './trustedFolders.js';
 import {
   createPolicyEngineConfig,
   resolveWorkspacePolicyState,
@@ -471,6 +471,7 @@ export async function loadCliConfig(
       prompt: argv.prompt,
       query: argv.query,
     })?.isTrusted ?? false;
+  const explicitFolderTrustDenial = isExplicitDoNotTrust(settings, cwd);
 
   // Set the context filename in the server's memoryTool module BEFORE loading memory
   // TODO(b/343434939): This is a bit of a hack. The contextFileName should ideally be passed
@@ -841,6 +842,7 @@ export async function loadCliConfig(
     folderTrust,
     interactive,
     trustedFolder,
+    explicitFolderTrustDenial,
     useBackgroundColor: settings.ui?.useBackgroundColor,
     useRipgrep: settings.tools?.useRipgrep,
     enableInteractiveShell: settings.tools?.shell?.enableInteractiveShell,

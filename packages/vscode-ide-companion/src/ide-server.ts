@@ -35,6 +35,25 @@ class CORSError extends Error {
   }
 }
 
+async function ensurePrivateDiscoveryDir(portDir: string): Promise<void> {
+  await fs.mkdir(portDir, { recursive: true, mode: 0o700 });
+  const stat = await fs.lstat(portDir);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new Error(
+      `IDE discovery directory ${portDir} must be a real directory.`,
+    );
+  }
+  if (process.platform !== 'win32') {
+    const uid = process.getuid?.();
+    if (uid !== undefined && stat.uid !== uid) {
+      throw new Error(
+        `IDE discovery directory ${portDir} is not owned by the current user.`,
+      );
+    }
+    await fs.chmod(portDir, 0o700);
+  }
+}
+
 const MCP_SESSION_ID_HEADER = 'mcp-session-id';
 const IDE_SERVER_PORT_ENV_VAR = 'GEMINI_CLI_IDE_SERVER_PORT';
 const IDE_WORKSPACE_PATH_ENV_VAR = 'GEMINI_CLI_IDE_WORKSPACE_PATH';
@@ -345,7 +364,7 @@ export class IDEServer {
           let portFile: string | undefined;
           try {
             const portDir = path.join(tmpdir(), 'gemini', 'ide');
-            await fs.mkdir(portDir, { recursive: true });
+            await ensurePrivateDiscoveryDir(portDir);
             portFile = path.join(
               portDir,
               `gemini-ide-server-${process.ppid}-${this.port}.json`,

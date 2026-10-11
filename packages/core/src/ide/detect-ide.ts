@@ -133,6 +133,14 @@ function verifyJetBrains(
   return ide;
 }
 
+function parentProcessIsSupportedIde(): boolean {
+  return (
+    process.env['TERM_PROGRAM'] === 'vscode' ||
+    process.env['TERM_PROGRAM'] === 'sublime' ||
+    isJetBrains()
+  );
+}
+
 export function detectIde(
   ideProcessInfo: {
     pid: number;
@@ -140,20 +148,17 @@ export function detectIde(
   },
   ideInfoFromFile?: { name?: string; displayName?: string },
 ): IdeInfo | undefined {
+  // A discovery file cannot invent an IDE. The parent process has to already
+  // be a supported IDE before any name from that file is accepted.
+  if (!parentProcessIsSupportedIde()) {
+    return undefined;
+  }
+
   if (ideInfoFromFile?.name && ideInfoFromFile.displayName) {
     return {
       name: ideInfoFromFile.name,
       displayName: ideInfoFromFile.displayName,
     };
-  }
-
-  // Only VS Code, Sublime Text and JetBrains integrations are currently supported.
-  if (
-    process.env['TERM_PROGRAM'] !== 'vscode' &&
-    process.env['TERM_PROGRAM'] !== 'sublime' &&
-    !isJetBrains()
-  ) {
-    return undefined;
   }
 
   const ide = detectIdeFromEnv();

@@ -51,6 +51,17 @@ describe('ide-connection-utils', () => {
     vi.mocked(os.tmpdir).mockReturnValue('/tmp');
     vi.mocked(os.platform).mockReturnValue('linux');
     vi.spyOn(process, 'kill').mockImplementation(() => true);
+    vi.spyOn(fs.promises, 'lstat').mockImplementation(async (candidate) => {
+      const value = String(candidate);
+      const isDir = value.endsWith(`${path.sep}ide`) || value.endsWith('/ide');
+      return {
+        isSymbolicLink: () => false,
+        isDirectory: () => isDir,
+        isFile: () => !isDir,
+        mode: isDir ? 0o700 : 0o600,
+        uid: process.getuid?.() ?? 0,
+      } as fs.Stats;
+    });
   });
 
   afterEach(() => {
@@ -70,6 +81,58 @@ describe('ide-connection-utils', () => {
         path.join('/tmp', 'gemini', 'ide', 'gemini-ide-server-12345.json'),
         'utf8',
       );
+    });
+
+    it('should refuse a world-writable discovery directory', async () => {
+      vi.mocked(fs.promises.lstat).mockResolvedValue({
+        isSymbolicLink: () => false,
+        isDirectory: () => true,
+        isFile: () => false,
+        mode: 0o777,
+        uid: process.getuid?.() ?? 0,
+      } as fs.Stats);
+
+      const result = await getConnectionConfigFromFile(12345);
+
+      expect(result).toBeUndefined();
+      expect(fs.promises.readFile).not.toHaveBeenCalled();
+    });
+
+    it('should refuse a discovery file owned by another user', async () => {
+      vi.mocked(fs.promises.lstat).mockImplementation(async (candidate) => {
+        const value = String(candidate);
+        const isDir = value.endsWith('/ide');
+        return {
+          isSymbolicLink: () => false,
+          isDirectory: () => isDir,
+          isFile: () => !isDir,
+          mode: isDir ? 0o700 : 0o600,
+          uid: isDir
+            ? (process.getuid?.() ?? 0)
+            : (process.getuid?.() ?? 0) + 1,
+        } as fs.Stats;
+      });
+
+      const result = await getConnectionConfigFromFile(12345);
+
+      expect(result).toBeUndefined();
+    });
+
+    it('should drop a stdio command from discovery JSON', async () => {
+      const config = {
+        port: '1234',
+        workspacePath: '/test/workspace',
+        stdio: { command: 'evil', args: ['--payload'] },
+      };
+      vi.mocked(fs.promises.readFile).mockResolvedValue(JSON.stringify(config));
+
+      const result = await getConnectionConfigFromFile(12345);
+
+      expect(result).toEqual({
+        port: '1234',
+        workspacePath: '/test/workspace',
+      });
+      expect(result).not.toHaveProperty('stdio');
     });
 
     it('should return undefined if no config files are found', async () => {
@@ -135,7 +198,7 @@ describe('ide-connection-utils', () => {
       expect(result).toEqual(validConfig);
     });
 
-    it('should fall back to a different PID if it matches the current workspace', async () => {
+    it('should ignore a discovery file for a different PID', async () => {
       const targetPid = 12345;
       const otherPid = 67890;
       const validConfig = {
@@ -156,8 +219,8 @@ describe('ide-connection-utils', () => {
 
       const result = await getConnectionConfigFromFile(targetPid);
 
-      expect(result).toEqual(validConfig);
-      expect(fs.promises.readFile).toHaveBeenCalledWith(
+      expect(result).toBeUndefined();
+      expect(fs.promises.readFile).not.toHaveBeenCalledWith(
         path.join(
           '/tmp',
           'gemini',
@@ -206,13 +269,8 @@ describe('ide-connection-utils', () => {
       );
     });
 
-    it('should prioritize an alive process over a dead one', async () => {
-      const targetPid = 12345; // target not present
-      const alivePid = 22222;
-      const deadPid = 11111;
-      const aliveConfig = { port: '2222', workspacePath: '/test/workspace' };
-      const deadConfig = { port: '1111', workspacePath: '/test/workspace' };
-
+    it('should not connect using another process pid when the IDE pid has no file', async () => {
+      const targetPid = 12345;
       vi.mocked(fs.promises.readFile).mockRejectedValueOnce(
         new Error('not found'),
       );
@@ -221,71 +279,13 @@ describe('ide-connection-utils', () => {
           (path: fs.PathLike) => Promise<string[]>
         >
       ).mockResolvedValue([
-        `gemini-ide-server-${deadPid}-1.json`,
-        `gemini-ide-server-${alivePid}-1.json`,
+        'gemini-ide-server-11111-1.json',
+        'gemini-ide-server-22222-1.json',
       ]);
-
-      vi.spyOn(process, 'kill').mockImplementation((pid) => {
-        if (pid === alivePid) return true;
-        throw new Error('dead');
-      });
-
-      vi.mocked(fs.promises.readFile)
-        .mockResolvedValueOnce(JSON.stringify(aliveConfig))
-        .mockResolvedValueOnce(JSON.stringify(deadConfig));
 
       const result = await getConnectionConfigFromFile(targetPid);
 
-      expect(result).toEqual(aliveConfig);
-      expect(fs.promises.readFile).toHaveBeenCalledWith(
-        path.join(
-          '/tmp',
-          'gemini',
-          'ide',
-          `gemini-ide-server-${alivePid}-1.json`,
-        ),
-        'utf8',
-      );
-    });
-
-    it('should prioritize the largest PID (newest) among alive processes', async () => {
-      const targetPid = 12345; // target not present
-      const oldPid = 20000;
-      const newPid = 30000;
-      const oldConfig = { port: '2000', workspacePath: '/test/workspace' };
-      const newConfig = { port: '3000', workspacePath: '/test/workspace' };
-
-      vi.mocked(fs.promises.readFile).mockRejectedValueOnce(
-        new Error('not found'),
-      );
-      (
-        vi.mocked(fs.promises.readdir) as Mock<
-          (path: fs.PathLike) => Promise<string[]>
-        >
-      ).mockResolvedValue([
-        `gemini-ide-server-${oldPid}-1.json`,
-        `gemini-ide-server-${newPid}-1.json`,
-      ]);
-
-      // Both are alive
-      vi.spyOn(process, 'kill').mockImplementation(() => true);
-
-      vi.mocked(fs.promises.readFile)
-        .mockResolvedValueOnce(JSON.stringify(newConfig))
-        .mockResolvedValueOnce(JSON.stringify(oldConfig));
-
-      const result = await getConnectionConfigFromFile(targetPid);
-
-      expect(result).toEqual(newConfig);
-      expect(fs.promises.readFile).toHaveBeenCalledWith(
-        path.join(
-          '/tmp',
-          'gemini',
-          'ide',
-          `gemini-ide-server-${newPid}-1.json`,
-        ),
-        'utf8',
-      );
+      expect(result).toBeUndefined();
     });
 
     it('should return the first valid config when multiple workspaces are valid', async () => {
@@ -448,6 +448,12 @@ describe('ide-connection-utils', () => {
       const result = validateWorkspacePath('', '/test/workspace/sub-dir');
       expect(result.isValid).toBe(false);
       expect(result.error).toContain('please open a workspace folder');
+    });
+
+    it('should reject the filesystem root as a workspace path', () => {
+      const result = validateWorkspacePath('/', '/test/workspace/sub-dir');
+      expect(result.isValid).toBe(false);
+      expect(result.error).toContain('filesystem root');
     });
 
     it('should return invalid if cwd is not within workspace path', () => {

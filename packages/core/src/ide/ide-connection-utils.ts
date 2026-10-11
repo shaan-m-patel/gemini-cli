@@ -33,6 +33,11 @@ export type ConnectionConfig = {
   stdio?: StdioConfig;
 };
 
+function isFilesystemRoot(candidate: string): boolean {
+  const resolved = path.resolve(candidate);
+  return resolved === path.parse(resolved).root;
+}
+
 export function validateWorkspacePath(
   ideWorkspacePath: string | undefined,
   cwd: string,
@@ -54,7 +59,17 @@ export function validateWorkspacePath(
   const ideWorkspacePaths = ideWorkspacePath
     .split(path.delimiter)
     .map((p) => resolveToRealPath(p))
-    .filter((e) => !!e);
+    .filter((e): e is string => !!e)
+    .filter((candidate) => !isFilesystemRoot(candidate));
+
+  if (ideWorkspacePaths.length === 0) {
+    return {
+      isValid: false,
+      error:
+        'IDE workspace path is missing or is the filesystem root, which is too broad to trust.',
+    };
+  }
+
   const realCwd = resolveToRealPath(cwd);
   const isWithinWorkspace = ideWorkspacePaths.some((workspacePath) =>
     isSubpath(workspacePath, realCwd),
@@ -109,30 +124,104 @@ export function getStdioConfigFromEnv(): StdioConfig | undefined {
 
 const IDE_SERVER_FILE_REGEX = /^gemini-ide-server-(\d+)-\d+\.json$/;
 
+export function getIdeDiscoveryDirectory(): string {
+  return path.join(os.tmpdir(), 'gemini', 'ide');
+}
+
+/**
+ * Discovery files live in a shared temp directory. Refuse to trust the
+ * directory or a file inside it when another local user could have written it.
+ */
+export async function isSecureIdeDiscoveryPath(
+  candidate: string,
+  kind: 'directory' | 'file',
+): Promise<boolean> {
+  let stat: fs.Stats;
+  try {
+    stat = await fs.promises.lstat(candidate);
+  } catch {
+    return false;
+  }
+
+  if (stat.isSymbolicLink()) {
+    return false;
+  }
+  if (kind === 'directory' ? !stat.isDirectory() : !stat.isFile()) {
+    return false;
+  }
+
+  // Windows ACLs are not expressed by the Unix mode bits this check uses.
+  if (process.platform === 'win32') {
+    return true;
+  }
+
+  const uid = process.getuid?.();
+  if (uid !== undefined && stat.uid !== uid) {
+    return false;
+  }
+  // Group- or world-writable paths can be replaced by another local user.
+  if ((stat.mode & 0o022) !== 0) {
+    return false;
+  }
+  return true;
+}
+
+function sanitizeDiscoveryConfig(
+  parsed: unknown,
+):
+  | (ConnectionConfig & { workspacePath?: string; ideInfo?: IdeInfo })
+  | undefined {
+  if (!parsed || typeof parsed !== 'object') {
+    return undefined;
+  }
+  const record = parsed as ConnectionConfig & {
+    workspacePath?: string;
+    ideInfo?: IdeInfo;
+  };
+  // A temp-file must never choose a process to spawn.
+  delete record.stdio;
+  return record;
+}
+
 export async function getConnectionConfigFromFile(
   pid: number,
 ): Promise<
   (ConnectionConfig & { workspacePath?: string; ideInfo?: IdeInfo }) | undefined
 > {
-  // For backwards compatibility
-  try {
-    const portFile = path.join(
-      os.tmpdir(),
-      'gemini',
-      'ide',
-      `gemini-ide-server-${pid}.json`,
+  const portFileDir = getIdeDiscoveryDirectory();
+  if (!(await isSecureIdeDiscoveryPath(portFileDir, 'directory'))) {
+    logger.debug(
+      'Refusing to read IDE discovery directory because it is missing, a symlink, or not private to the current user.',
     );
-    const portFileContents = await fs.promises.readFile(portFile, 'utf8');
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-    return JSON.parse(portFileContents);
-  } catch (_) {
-    // For newer extension versions, the file name matches the pattern
-    // /^gemini-ide-server-${pid}-\d+\.json$/. If multiple IDE
-    // windows are open, multiple files matching the pattern are expected to
-    // exist.
+    return undefined;
   }
 
-  const portFileDir = path.join(os.tmpdir(), 'gemini', 'ide');
+  // Legacy filename. Only the file for this IDE pid is eligible, and only
+  // after the same owner and mode checks as the directory.
+  const legacyPortFile = path.join(
+    portFileDir,
+    `gemini-ide-server-${pid}.json`,
+  );
+  if (await isSecureIdeDiscoveryPath(legacyPortFile, 'file')) {
+    try {
+      const portFileContents = await fs.promises.readFile(
+        legacyPortFile,
+        'utf8',
+      );
+      const parsed = sanitizeDiscoveryConfig(JSON.parse(portFileContents));
+      if (parsed) {
+        const { isValid } = validateWorkspacePath(
+          parsed.workspacePath,
+          process.cwd(),
+        );
+        if (isValid && parsed.port) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      logger.debug('Failed to read legacy IDE connection file:', e);
+    }
+  }
   let portFiles;
   try {
     portFiles = await fs.promises.readdir(portFileDir);
@@ -145,9 +234,15 @@ export async function getConnectionConfigFromFile(
     return undefined;
   }
 
-  const matchingFiles = portFiles.filter((file) =>
-    IDE_SERVER_FILE_REGEX.test(file),
-  );
+  const matchingFiles = portFiles.filter((file) => {
+    const match = file.match(IDE_SERVER_FILE_REGEX);
+    if (!match) {
+      return false;
+    }
+    // Only the file created for this IDE process. A sibling pid is not proof
+    // that the companion belongs to the IDE that launched the CLI.
+    return Number.parseInt(match[1], 10) === pid;
+  });
 
   if (matchingFiles.length === 0) {
     return undefined;
@@ -155,10 +250,18 @@ export async function getConnectionConfigFromFile(
 
   sortConnectionFiles(matchingFiles, pid);
 
+  const secureFiles: string[] = [];
+  for (const file of matchingFiles) {
+    const filePath = path.join(portFileDir, file);
+    if (await isSecureIdeDiscoveryPath(filePath, 'file')) {
+      secureFiles.push(file);
+    }
+  }
+
   let fileContents: string[];
   try {
     fileContents = await Promise.all(
-      matchingFiles.map((file) =>
+      secureFiles.map((file) =>
         fs.promises.readFile(path.join(portFileDir, file), 'utf8'),
       ),
     );
@@ -196,10 +299,9 @@ export async function getConnectionConfigFromFile(
     const selected = validWorkspaces[0];
     const fileIndex = parsedContents.indexOf(selected);
     if (fileIndex !== -1) {
-      logger.debug(`Selected IDE connection file: ${matchingFiles[fileIndex]}`);
+      logger.debug(`Selected IDE connection file: ${secureFiles[fileIndex]}`);
     }
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-    return selected;
+    return sanitizeDiscoveryConfig(selected);
   }
 
   const portFromEnv = getPortFromEnv();
@@ -213,11 +315,10 @@ export async function getConnectionConfigFromFile(
       const fileIndex = parsedContents.indexOf(selected);
       if (fileIndex !== -1) {
         logger.debug(
-          `Selected IDE connection file (matched port from env): ${matchingFiles[fileIndex]}`,
+          `Selected IDE connection file (matched port from env): ${secureFiles[fileIndex]}`,
         );
       }
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-      return selected;
+      return sanitizeDiscoveryConfig(selected);
     }
   }
 
@@ -226,11 +327,10 @@ export async function getConnectionConfigFromFile(
   const fileIndex = parsedContents.indexOf(selected);
   if (fileIndex !== -1) {
     logger.debug(
-      `Selected first valid IDE connection file: ${matchingFiles[fileIndex]}`,
+      `Selected first valid IDE connection file: ${secureFiles[fileIndex]}`,
     );
   }
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-return
-  return selected;
+  return sanitizeDiscoveryConfig(selected);
 }
 
 // Sort files to prioritize the one matching the target pid,
