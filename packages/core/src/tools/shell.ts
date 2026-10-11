@@ -153,7 +153,9 @@ export class ShellToolInvocation extends BaseToolInvocation<
     shellExecutionConfig?: ShellExecutionConfig,
     setPidCallback?: (pid: number) => void,
   ): Promise<ToolResult> {
-    const strippedCommand = stripShellWrapper(this.params.command);
+    // Run the command string policy and the confirmation UI evaluated.
+    // Unwrapping `bash -c '...'` would make quoted substitutions live.
+    const commandToRun = this.params.command;
 
     if (signal.aborted) {
       return {
@@ -180,10 +182,10 @@ export class ShellToolInvocation extends BaseToolInvocation<
     try {
       // pgrep is not available on Windows, so we can't get background PIDs
       const commandToExecute = isWindows
-        ? strippedCommand
+        ? commandToRun
         : (() => {
             // wrap command to append subprocess pids (via pgrep) to temporary file
-            let command = strippedCommand.trim();
+            let command = commandToRun.trim();
             if (!command.endsWith('&')) command += ';';
             return `{ ${command} }; __code=$?; pgrep -g 0 >${tempFilePath} 2>&1; exit $__code;`;
           })();

@@ -702,21 +702,38 @@ export function getCommandRoots(command: string): string[] {
     .filter(Boolean);
 }
 
-export function stripShellWrapper(command: string): string {
-  const pattern =
-    /^\s*(?:(?:sh|bash|zsh)\s+-c|cmd\.exe\s+\/c|powershell(?:\.exe)?\s+(?:-NoProfile\s+)?-Command|pwsh(?:\.exe)?\s+(?:-NoProfile\s+)?-Command)\s+/i;
-  const match = command.match(pattern);
-  if (match) {
-    let newCommand = command.substring(match[0].length).trim();
-    if (
-      (newCommand.startsWith('"') && newCommand.endsWith('"')) ||
-      (newCommand.startsWith("'") && newCommand.endsWith("'"))
-    ) {
-      newCommand = newCommand.substring(1, newCommand.length - 1);
-    }
-    return newCommand;
+const SHELL_WRAPPER_PATTERN =
+  /^\s*(?:(?:sh|bash|zsh)\s+-c|cmd\.exe\s+\/c|powershell(?:\.exe)?\s+(?:-NoProfile\s+)?-Command|pwsh(?:\.exe)?\s+(?:-NoProfile\s+)?-Command)\s+/i;
+
+/**
+ * Returns the script a `sh -c` / `bash -c` / PowerShell `-Command` wrapper
+ * would execute, with one layer of matching quotes removed. Undefined when
+ * the command is not such a wrapper.
+ *
+ * This is for authorization only. Execution must keep the original command so
+ * quotes stay inert in the outer shell.
+ */
+export function getWrappedShellScript(command: string): string | undefined {
+  const match = command.match(SHELL_WRAPPER_PATTERN);
+  if (!match) {
+    return undefined;
   }
-  return command.trim();
+  let script = command.substring(match[0].length).trim();
+  if (
+    script.length >= 2 &&
+    ((script.startsWith('"') && script.endsWith('"')) ||
+      (script.startsWith("'") && script.endsWith("'")))
+  ) {
+    script = script.substring(1, script.length - 1);
+  }
+  if (script.length === 0 || script === command.trim()) {
+    return undefined;
+  }
+  return script;
+}
+
+export function stripShellWrapper(command: string): string {
+  return getWrappedShellScript(command) ?? command.trim();
 }
 
 /**
