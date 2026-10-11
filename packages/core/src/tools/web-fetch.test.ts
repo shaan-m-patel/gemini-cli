@@ -10,6 +10,7 @@ import type { Config } from '../config/config.js';
 import { ApprovalMode } from '../policy/types.js';
 import { ToolConfirmationOutcome } from './tools.js';
 import { ToolErrorType } from './tool-error.js';
+import { FetchError } from '../utils/fetch.js';
 import {
   createMockMessageBus,
   getMockMessageBusInstance,
@@ -47,7 +48,9 @@ vi.mock('../utils/fetch.js', async (importOriginal) => {
   return {
     ...actual,
     fetchWithTimeout: vi.fn(),
+    fetchPublicUrl: vi.fn(),
     isPrivateIp: vi.fn(),
+    resolvesToBlockedAddress: vi.fn(),
   };
 });
 
@@ -134,6 +137,8 @@ describe('WebFetchTool', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(false);
+    vi.spyOn(fetchUtils, 'resolvesToBlockedAddress').mockResolvedValue(false);
     bus = createMockMessageBus();
     getMockMessageBusInstance(bus).defaultToolDecision = 'ask_user';
     mockConfig = {
@@ -204,15 +209,53 @@ describe('WebFetchTool', () => {
     });
 
     it('should return WEB_FETCH_FALLBACK_FAILED on fallback fetch failure', async () => {
-      vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(true);
-      vi.spyOn(fetchUtils, 'fetchWithTimeout').mockRejectedValue(
+      vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(false);
+      mockGenerateContent.mockResolvedValueOnce({
+        candidates: [],
+      });
+      vi.spyOn(fetchUtils, 'fetchPublicUrl').mockRejectedValue(
         new Error('fetch failed'),
       );
       const tool = new WebFetchTool(mockConfig, bus);
-      const params = { prompt: 'fetch https://private.ip' };
+      const params = { prompt: 'fetch https://public.example' };
       const invocation = tool.build(params);
       const result = await invocation.execute(new AbortController().signal);
       expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_FALLBACK_FAILED);
+      expect(result.llmContent).not.toContain('INSTANCE_CREDENTIAL');
+    });
+
+    it('should refuse a private address without a local fallback fetch', async () => {
+      vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(true);
+      const fetchPublic = vi.spyOn(fetchUtils, 'fetchPublicUrl');
+      const tool = new WebFetchTool(mockConfig, bus);
+      const params = {
+        prompt: 'fetch http://169.254.169.254/latest/meta-data/',
+      };
+      const invocation = tool.build(params);
+      const result = await invocation.execute(new AbortController().signal);
+
+      expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_PROCESSING_ERROR);
+      expect(result.error?.message).toContain(
+        'Refusing to fetch blocked address',
+      );
+      expect(result.llmContent).not.toContain('INSTANCE_CREDENTIAL');
+      expect(fetchPublic).not.toHaveBeenCalled();
+      expect(mockGenerateContent).not.toHaveBeenCalled();
+      expect(logWebFetchFallbackAttempt).not.toHaveBeenCalled();
+    });
+
+    it('should refuse a public hostname that resolves to a private address', async () => {
+      vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(false);
+      vi.spyOn(fetchUtils, 'resolvesToBlockedAddress').mockResolvedValue(true);
+      const fetchPublic = vi.spyOn(fetchUtils, 'fetchPublicUrl');
+      const tool = new WebFetchTool(mockConfig, bus);
+      const params = { prompt: 'fetch https://metadata.example' };
+      const invocation = tool.build(params);
+      const result = await invocation.execute(new AbortController().signal);
+
+      expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_PROCESSING_ERROR);
+      expect(fetchPublic).not.toHaveBeenCalled();
+      expect(mockGenerateContent).not.toHaveBeenCalled();
     });
 
     it('should return WEB_FETCH_PROCESSING_ERROR on general processing failure', async () => {
@@ -225,27 +268,27 @@ describe('WebFetchTool', () => {
       expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_PROCESSING_ERROR);
     });
 
-    it('should log telemetry when falling back due to private IP', async () => {
-      vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(true);
-      // Mock fetchWithTimeout to succeed so fallback proceeds
-      vi.spyOn(fetchUtils, 'fetchWithTimeout').mockResolvedValue({
-        ok: true,
-        text: () => Promise.resolve('some content'),
-      } as Response);
-      mockGenerateContent.mockResolvedValue({
-        candidates: [{ content: { parts: [{ text: 'fallback response' }] } }],
+    it('should not fall back or return a body when a redirect is blocked', async () => {
+      vi.spyOn(fetchUtils, 'isPrivateIp').mockReturnValue(false);
+      mockGenerateContent.mockResolvedValueOnce({
+        candidates: [],
       });
+      vi.spyOn(fetchUtils, 'fetchPublicUrl').mockRejectedValue(
+        new FetchError(
+          'Refusing to fetch blocked address http://127.0.0.1/secret',
+          'EBLOCKED',
+        ),
+      );
 
       const tool = new WebFetchTool(mockConfig, bus);
-      const params = { prompt: 'fetch https://private.ip' };
+      const params = { prompt: 'fetch https://attacker.example/docs' };
       const invocation = tool.build(params);
-      await invocation.execute(new AbortController().signal);
+      const result = await invocation.execute(new AbortController().signal);
 
-      expect(logWebFetchFallbackAttempt).toHaveBeenCalledWith(
-        mockConfig,
-        expect.any(WebFetchFallbackAttemptEvent),
-      );
-      expect(WebFetchFallbackAttemptEvent).toHaveBeenCalledWith('private_ip');
+      expect(result.error?.type).toBe(ToolErrorType.WEB_FETCH_FALLBACK_FAILED);
+      expect(result.llmContent).toContain('Refusing to fetch blocked address');
+      expect(result.llmContent).not.toContain('INSTANCE_CREDENTIAL');
+      expect(mockGenerateContent).toHaveBeenCalledTimes(1);
     });
 
     it('should log telemetry when falling back due to primary fetch failure', async () => {
@@ -255,7 +298,7 @@ describe('WebFetchTool', () => {
         candidates: [],
       });
       // Mock fetchWithTimeout to succeed so fallback proceeds
-      vi.spyOn(fetchUtils, 'fetchWithTimeout').mockResolvedValue({
+      vi.spyOn(fetchUtils, 'fetchPublicUrl').mockResolvedValue({
         ok: true,
         text: () => Promise.resolve('some content'),
       } as Response);
@@ -320,8 +363,9 @@ describe('WebFetchTool', () => {
           ? new Headers({ 'content-type': contentType })
           : new Headers();
 
-        vi.spyOn(fetchUtils, 'fetchWithTimeout').mockResolvedValue({
+        vi.spyOn(fetchUtils, 'fetchPublicUrl').mockResolvedValue({
           ok: true,
+          status: 200,
           headers,
           text: () => Promise.resolve(content),
         } as Response);
