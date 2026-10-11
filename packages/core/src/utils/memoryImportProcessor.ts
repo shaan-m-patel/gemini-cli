@@ -5,6 +5,7 @@
  */
 
 import * as fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
 import * as path from 'node:path';
 import { isSubpath } from './paths.js';
 import { debugLogger } from './debugLogger.js';
@@ -372,6 +373,42 @@ export async function processImports(
   };
 }
 
+/**
+ * Canonical path of an existing file, or of the nearest existing ancestor with
+ * the missing suffix reattached. Returns null when the path cannot be resolved.
+ */
+function canonicalImportPath(candidate: string): string | null {
+  const absolute = path.resolve(candidate);
+  const missing: string[] = [];
+  let current = absolute;
+
+  while (true) {
+    try {
+      const real = fsSync.realpathSync(current);
+      return missing.length === 0
+        ? real
+        : path.resolve(real, ...missing.reverse());
+    } catch (error) {
+      const code =
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        typeof error.code === 'string'
+          ? error.code
+          : undefined;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+        return null;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) {
+        return null;
+      }
+      missing.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
 export function validateImportPath(
   importPath: string,
   basePath: string,
@@ -383,8 +420,16 @@ export function validateImportPath(
   }
 
   const resolvedPath = path.resolve(basePath, importPath);
+  const canonicalTarget = canonicalImportPath(resolvedPath);
+  if (!canonicalTarget) {
+    return false;
+  }
 
-  return allowedDirectories.some((allowedDir) =>
-    isSubpath(allowedDir, resolvedPath),
-  );
+  return allowedDirectories.some((allowedDir) => {
+    const canonicalAllowed = canonicalImportPath(allowedDir);
+    if (!canonicalAllowed) {
+      return false;
+    }
+    return isSubpath(canonicalAllowed, canonicalTarget);
+  });
 }
