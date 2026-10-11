@@ -213,7 +213,16 @@ describe('detectIde with ideInfoFromFile', () => {
     vi.stubEnv('TERMINAL_EMULATOR', '');
   });
 
-  it('should use the name and displayName from the file', () => {
+  it('should ignore ideInfo from a discovery file when the parent is not a supported IDE', () => {
+    const ideInfoFromFile = {
+      name: 'custom-ide',
+      displayName: 'Custom IDE',
+    };
+    expect(detectIde(ideProcessInfo, ideInfoFromFile)).toBeUndefined();
+  });
+
+  it('should use the name and displayName from the file when the parent is a supported IDE', () => {
+    vi.stubEnv('TERM_PROGRAM', 'vscode');
     const ideInfoFromFile = {
       name: 'custom-ide',
       displayName: 'Custom IDE',

@@ -368,9 +368,24 @@ describe('Trusted Folders', () => {
       });
     });
 
-    it('should prioritize IDE override over file config', () => {
+    it('should not let an IDE notification override an explicit do-not-trust rule', () => {
       const config = { '/projectA': TrustLevel.DO_NOT_TRUST };
       fs.writeFileSync(trustedFoldersPath, JSON.stringify(config), 'utf-8');
+
+      ideContextStore.set({ workspaceState: { isTrusted: true } });
+
+      try {
+        expect(isWorkspaceTrusted(mockSettings, '/projectA')).toEqual({
+          isTrusted: false,
+          source: 'file',
+        });
+      } finally {
+        ideContextStore.clear();
+      }
+    });
+
+    it('should still allow an IDE trust signal when the file has no rule', () => {
+      fs.writeFileSync(trustedFoldersPath, JSON.stringify({}), 'utf-8');
 
       ideContextStore.set({ workspaceState: { isTrusted: true } });
 

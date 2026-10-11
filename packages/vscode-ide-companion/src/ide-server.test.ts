@@ -28,6 +28,13 @@ vi.mock('node:fs/promises', () => ({
   unlink: vi.fn(() => Promise.resolve(undefined)),
   chmod: vi.fn(() => Promise.resolve(undefined)),
   mkdir: vi.fn(() => Promise.resolve(undefined)),
+  lstat: vi.fn(async () => ({
+    isSymbolicLink: () => false,
+    isDirectory: () => true,
+    isFile: () => false,
+    uid: typeof process.getuid === 'function' ? process.getuid() : 0,
+    mode: 0o700,
+  })),
 }));
 
 vi.mock('node:os', async (importOriginal) => {
@@ -157,7 +164,12 @@ describe('IDEServer', () => {
     });
     expect(fs.mkdir).toHaveBeenCalledWith(path.join('/tmp', 'gemini', 'ide'), {
       recursive: true,
+      mode: 0o700,
     });
+    expect(fs.chmod).toHaveBeenCalledWith(
+      path.join('/tmp', 'gemini', 'ide'),
+      0o700,
+    );
     expect(fs.writeFile).toHaveBeenCalledWith(
       expectedPortFile,
       expectedContent,

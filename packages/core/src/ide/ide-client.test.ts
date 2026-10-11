@@ -124,8 +124,7 @@ describe('IdeClient', () => {
       );
     });
 
-    it('should connect using stdio when stdio config is provided in file', async () => {
-      // Update the mock to use the new utility
+    it('should not spawn a stdio command from discovery JSON', async () => {
       const config = { stdio: { command: 'test-cmd', args: ['--foo'] } };
       vi.mocked(getConnectionConfigFromFile).mockResolvedValue(config);
       vi.mocked(validateWorkspacePath).mockReturnValue({ isValid: true });
@@ -133,13 +132,9 @@ describe('IdeClient', () => {
       const ideClient = await IdeClient.getInstance();
       await ideClient.connect();
 
-      expect(StdioClientTransport).toHaveBeenCalledWith({
-        command: 'test-cmd',
-        args: ['--foo'],
-      });
-      expect(mockClient.connect).toHaveBeenCalledWith(mockStdioTransport);
+      expect(StdioClientTransport).not.toHaveBeenCalled();
       expect(ideClient.getConnectionStatus().status).toBe(
-        IDEConnectionStatus.Connected,
+        IDEConnectionStatus.Disconnected,
       );
     });
 

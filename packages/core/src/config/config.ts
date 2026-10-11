@@ -460,6 +460,11 @@ export interface ConfigParameters {
   compressionThreshold?: number;
   interactive?: boolean;
   trustedFolder?: boolean;
+  /**
+   * When true, an IDE context notification cannot mark the folder trusted.
+   * Set from an explicit DO_NOT_TRUST rule in trustedFolders.json.
+   */
+  explicitFolderTrustDenial?: boolean;
   useBackgroundColor?: boolean;
   useRipgrep?: boolean;
   enableInteractiveShell?: boolean;
@@ -633,6 +638,7 @@ export class Config {
   readonly interactive: boolean;
   private readonly ptyInfo: string;
   private readonly trustedFolder: boolean | undefined;
+  private readonly explicitFolderTrustDenial: boolean;
   private readonly useRipgrep: boolean;
   private readonly enableInteractiveShell: boolean;
   private readonly skipNextSpeakerCheck: boolean;
@@ -827,6 +833,7 @@ export class Config {
     this.interactive = params.interactive ?? false;
     this.ptyInfo = params.ptyInfo ?? 'child_process';
     this.trustedFolder = params.trustedFolder;
+    this.explicitFolderTrustDenial = params.explicitFolderTrustDenial ?? false;
     this.useRipgrep = params.useRipgrep ?? true;
     this.useBackgroundColor = params.useBackgroundColor ?? true;
     this.enableInteractiveShell = params.enableInteractiveShell ?? false;
@@ -2132,6 +2139,11 @@ export class Config {
    * 'false' for untrusted.
    */
   isTrustedFolder(): boolean {
+    // A saved do-not-trust decision beats a later IDE notification.
+    if (this.explicitFolderTrustDenial) {
+      return false;
+    }
+
     const context = ideContextStore.get();
     if (context?.workspaceState?.isTrusted !== undefined) {
       return context.workspaceState.isTrusted;

@@ -134,6 +134,17 @@ export class LoadedTrustedFolders {
     if (isHeadlessMode(headlessOptions)) {
       return true;
     }
+    return this.trustFromFile(location, config);
+  }
+
+  /**
+   * Trust decision from trustedFolders.json only. Ignores headless mode and
+   * IDE notifications so an explicit DO_NOT_TRUST rule can be enforced.
+   */
+  trustFromFile(
+    location: string,
+    config?: Record<string, TrustLevel>,
+  ): boolean | undefined {
     const configToUse = config ?? this.user.config;
 
     // Resolve location to its realpath for canonical comparison
@@ -377,15 +388,38 @@ export function isWorkspaceTrusted(
     return { isTrusted: true, source: undefined };
   }
 
+  const fileTrust = getWorkspaceTrustFromLocalConfig(
+    workspaceDir,
+    trustConfig,
+    headlessOptions,
+  );
+  // An explicit do-not-trust rule cannot be overridden by an IDE notification.
+  if (fileTrust.isTrusted === false) {
+    return fileTrust;
+  }
+
   const ideTrust = ideContextStore.get()?.workspaceState?.isTrusted;
   if (ideTrust !== undefined) {
     return { isTrusted: ideTrust, source: 'ide' };
   }
 
-  // Fall back to the local user configuration
-  return getWorkspaceTrustFromLocalConfig(
-    workspaceDir,
-    trustConfig,
-    headlessOptions,
-  );
+  return fileTrust;
+}
+
+/**
+ * True when trustedFolders.json contains an explicit DO_NOT_TRUST rule for
+ * this directory. Headless mode and IDE notifications do not change the result.
+ */
+export function isExplicitDoNotTrust(
+  settings: Settings,
+  workspaceDir: string = process.cwd(),
+): boolean {
+  if (!isFolderTrustEnabled(settings)) {
+    return false;
+  }
+  const folders = loadTrustedFolders();
+  if (folders.errors.length > 0) {
+    return false;
+  }
+  return folders.trustFromFile(workspaceDir) === false;
 }
