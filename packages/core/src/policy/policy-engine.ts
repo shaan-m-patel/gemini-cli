@@ -20,6 +20,7 @@ import type { CheckerRunner } from '../safety/checker-runner.js';
 import { SafetyCheckDecision } from '../safety/protocol.js';
 import {
   SHELL_TOOL_NAMES,
+  getWrappedShellScript,
   initializeShellParsers,
   splitCommands,
   hasRedirection,
@@ -165,6 +166,42 @@ export class PolicyEngine {
       };
     }
 
+    const result = await this.evaluateShellCommand(
+      toolName,
+      command,
+      ruleDecision,
+      serverName,
+      dir_path,
+      allowRedirection,
+      rule,
+    );
+    if (result.decision !== PolicyDecision.ALLOW) {
+      return result;
+    }
+
+    // A bash/sh/zsh -c (or Windows equivalent) allowlist match must not
+    // authorize the script that the inner shell will run. Quotes that hide
+    // substitutions from the outer parser are live inside that script.
+    const wrappedScript = getWrappedShellScript(command);
+    if (!wrappedScript || wrappedScript === command) {
+      return result;
+    }
+    const innerResult = await this.check(
+      { name: toolName, args: { command: wrappedScript, dir_path } },
+      serverName,
+    );
+    return innerResult.decision === PolicyDecision.ALLOW ? result : innerResult;
+  }
+
+  private async evaluateShellCommand(
+    toolName: string,
+    command: string,
+    ruleDecision: PolicyDecision,
+    serverName: string | undefined,
+    dir_path: string | undefined,
+    allowRedirection?: boolean,
+    rule?: PolicyRule,
+  ): Promise<CheckResult> {
     await initializeShellParsers();
     const subCommands = splitCommands(command);
 

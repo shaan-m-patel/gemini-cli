@@ -257,6 +257,28 @@ describe('ShellTool', () => {
       resolveExecutionPromise(fullResult);
     };
 
+    it('should execute a quoted bash -c command without unwrapping it', async () => {
+      const command = `bash -c 'echo $(printf hi)'`;
+      const invocation = shellTool.build({ command });
+      const promise = invocation.execute(mockAbortSignal);
+      resolveShellExecution();
+      await promise;
+
+      const tmpFile = path.join(os.tmpdir(), 'shell_pgrep_abcdef.tmp');
+      const wrappedCommand = `{ ${command}; }; __code=$?; pgrep -g 0 >${tmpFile} 2>&1; exit $__code;`;
+      expect(mockShellExecutionService).toHaveBeenCalledWith(
+        wrappedCommand,
+        tempRootDir,
+        expect.any(Function),
+        expect.any(AbortSignal),
+        false,
+        { pager: 'cat', sanitizationConfig: {} },
+      );
+      expect(mockShellExecutionService.mock.calls[0]?.[0]).toContain(
+        `'echo $(printf hi)'`,
+      );
+    });
+
     it('should wrap command on linux and parse pgrep output', async () => {
       const invocation = shellTool.build({ command: 'my-command &' });
       const promise = invocation.execute(mockAbortSignal);

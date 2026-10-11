@@ -17,6 +17,7 @@ import {
   escapeShellArg,
   getCommandRoots,
   getShellConfiguration,
+  getWrappedShellScript,
   initializeShellParsers,
   parseCommandDetails,
   stripShellWrapper,
@@ -336,6 +337,17 @@ describe('stripShellWrapper', () => {
 
   it('should not strip anything if no wrapper is present', () => {
     expect(stripShellWrapper('ls -l')).toEqual('ls -l');
+  });
+});
+
+describe('getWrappedShellScript', () => {
+  it('returns the inner script with one layer of quotes removed', () => {
+    expect(getWrappedShellScript(`bash -c 'echo $(id)'`)).toEqual('echo $(id)');
+  });
+
+  it('returns undefined when the command is not a shell wrapper', () => {
+    expect(getWrappedShellScript('bash --version')).toBeUndefined();
+    expect(getWrappedShellScript('ls -l')).toBeUndefined();
   });
 });
 
