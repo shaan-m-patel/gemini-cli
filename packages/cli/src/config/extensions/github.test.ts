@@ -23,7 +23,7 @@ import * as https from 'node:https';
 import * as tar from 'tar';
 import * as extract from 'extract-zip';
 import type { ExtensionManager } from '../extension-manager.js';
-import { fetchJson } from './github_fetch.js';
+import { fetchJson, getGitHubToken } from './github_fetch.js';
 import { EventEmitter } from 'node:events';
 import type {
   GeminiCLIExtension,
@@ -116,6 +116,50 @@ describe('github.ts', () => {
       await expect(
         cloneFromGit({ type: 'git', source: 'src' }, '/dest'),
       ).rejects.toThrow('Unable to find any remotes');
+    });
+
+    it('should not embed a GitHub token in the clone URL', async () => {
+      vi.mocked(getGitHubToken).mockReturnValue('super-secret-token');
+      vi.mocked(os.tmpdir).mockReturnValue('/tmp');
+      const env = vi.fn().mockReturnThis();
+      const remote = vi.fn().mockResolvedValue(undefined);
+      Object.assign(mockGit, { env, remote });
+      mockGit.getRemotes.mockResolvedValue([{ name: 'origin' }]);
+
+      vi.mocked(fs.promises.mkdtemp).mockResolvedValue(
+        '/tmp/gemini-git-askpass-test',
+      );
+      vi.mocked(fs.promises.writeFile).mockResolvedValue(undefined);
+      vi.mocked(fs.promises.rm).mockResolvedValue(undefined);
+
+      await cloneFromGit(
+        {
+          type: 'git',
+          source: 'https://github.com/owner/private.git',
+          ref: 'main',
+        },
+        '/dest',
+      );
+
+      expect(mockGit.clone).toHaveBeenCalledWith(
+        'https://github.com/owner/private.git',
+        './',
+        ['--depth', '1'],
+      );
+      const cloneUrl = mockGit.clone.mock.calls[0][0] as string;
+      expect(cloneUrl).not.toContain('super-secret-token');
+      expect(env).toHaveBeenCalledWith(
+        expect.objectContaining({
+          GEMINI_GIT_ASKPASS_TOKEN: 'super-secret-token',
+          GIT_TERMINAL_PROMPT: '0',
+        }),
+      );
+      expect(remote).toHaveBeenCalledWith([
+        'set-url',
+        'origin',
+        'https://github.com/owner/private.git',
+      ]);
+      expect(fs.promises.rm).toHaveBeenCalled();
     });
 
     it('should throw on clone error', async () => {

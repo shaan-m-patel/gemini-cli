@@ -1054,7 +1054,14 @@ export async function copyExtension(
   source: string,
   destination: string,
 ): Promise<void> {
-  await fs.promises.cp(source, destination, { recursive: true });
+  await fs.promises.cp(source, destination, {
+    recursive: true,
+    filter: (candidate) => {
+      const relative = path.relative(source, candidate);
+      // The clone's git metadata can contain credentials. Do not install it.
+      return relative !== '.git' && !relative.startsWith(`.git${path.sep}`);
+    },
+  });
 }
 
 function getContextFileNames(config: ExtensionConfig): string[] {

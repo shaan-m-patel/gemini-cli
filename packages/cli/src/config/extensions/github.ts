@@ -24,51 +24,82 @@ import type { ExtensionManager } from '../extension-manager.js';
 import { EXTENSIONS_CONFIG_FILENAME } from './variables.js';
 
 /**
- * Clones a Git repository to a specified local path.
- * @param installMetadata The metadata for the extension to install.
- * @param destination The destination path to clone the repository to.
+ * Gives git a short-lived askpass helper so a GitHub token is never placed in
+ * the clone URL, git argv, or .git/config.
  */
+async function withGitHubAskPass<T>(
+  token: string,
+  run: (env: NodeJS.ProcessEnv) => Promise<T>,
+): Promise<T> {
+  const dir = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), 'gemini-git-askpass-'),
+  );
+  const scriptPath = path.join(dir, 'askpass.sh');
+  const script = `#!/bin/sh
+case "$1" in
+  *[Uu]sername*) printf '%s\\n' 'x-access-token' ;;
+  *) printf '%s\\n' "$GEMINI_GIT_ASKPASS_TOKEN" ;;
+esac
+`;
+  await fs.promises.writeFile(scriptPath, script, { mode: 0o700 });
+  try {
+    return await run({
+      ...process.env,
+      GIT_ASKPASS: scriptPath,
+      GIT_TERMINAL_PROMPT: '0',
+      GEMINI_GIT_ASKPASS_TOKEN: token,
+    });
+  } finally {
+    await fs.promises.rm(dir, { recursive: true, force: true });
+  }
+}
+
+function githubHttpsUrl(source: string): boolean {
+  try {
+    const parsedUrl = new URL(source);
+    return (
+      parsedUrl.protocol === 'https:' && parsedUrl.hostname === 'github.com'
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function cloneFromGit(
   installMetadata: ExtensionInstallMetadata,
   destination: string,
 ): Promise<void> {
   try {
-    const git = simpleGit(destination);
-    let sourceUrl = installMetadata.source;
     const token = getGitHubToken();
-    if (token) {
-      try {
-        const parsedUrl = new URL(sourceUrl);
-        if (
-          parsedUrl.protocol === 'https:' &&
-          parsedUrl.hostname === 'github.com'
-        ) {
-          if (!parsedUrl.username) {
-            parsedUrl.username = token;
-          }
-          sourceUrl = parsedUrl.toString();
-        }
-      } catch {
-        // If source is not a valid URL, we don't inject the token.
-        // We let git handle the source as is.
+    const useAskPass = !!token && githubHttpsUrl(installMetadata.source);
+    const clone = async (env?: NodeJS.ProcessEnv) => {
+      const git = env
+        ? simpleGit(destination).env(env)
+        : simpleGit(destination);
+      await git.clone(installMetadata.source, './', ['--depth', '1']);
+
+      const remotes = await git.getRemotes(true);
+      if (remotes.length === 0) {
+        throw new Error(
+          `Unable to find any remotes for repo ${installMetadata.source}`,
+        );
       }
+
+      if (useAskPass) {
+        // Drop any credential git may have stored on the remote URL.
+        await git.remote(['set-url', remotes[0].name, installMetadata.source]);
+      }
+
+      const refToFetch = installMetadata.ref || 'HEAD';
+      await git.fetch(remotes[0].name, refToFetch);
+      await git.checkout('FETCH_HEAD');
+    };
+
+    if (useAskPass && token) {
+      await withGitHubAskPass(token, clone);
+    } else {
+      await clone();
     }
-    await git.clone(sourceUrl, './', ['--depth', '1']);
-
-    const remotes = await git.getRemotes(true);
-    if (remotes.length === 0) {
-      throw new Error(
-        `Unable to find any remotes for repo ${installMetadata.source}`,
-      );
-    }
-
-    const refToFetch = installMetadata.ref || 'HEAD';
-
-    await git.fetch(remotes[0].name, refToFetch);
-
-    // After fetching, checkout FETCH_HEAD to get the content of the fetched ref.
-    // This results in a detached HEAD state, which is fine for this purpose.
-    await git.checkout('FETCH_HEAD');
   } catch (error) {
     throw new Error(
       `Failed to clone Git repository from ${installMetadata.source} ${getErrorMessage(error)}`,
