@@ -132,7 +132,7 @@ describe('Workspace-Level Policy CLI Integration', () => {
     );
   });
 
-  it('should automatically accept and load workspacePoliciesDir if integrity MISMATCH in non-interactive mode', async () => {
+  it('should not accept or load workspace policies if integrity MISMATCH in non-interactive mode', async () => {
     vi.mocked(isWorkspaceTrusted).mockReturnValue({
       isTrusted: true,
       source: 'file',
@@ -149,16 +149,10 @@ describe('Workspace-Level Policy CLI Integration', () => {
 
     await loadCliConfig(settings, 'test-session', argv, { cwd: MOCK_CWD });
 
-    expect(mockAcceptIntegrity).toHaveBeenCalledWith(
-      'workspace',
-      MOCK_CWD,
-      'new-hash',
-    );
+    expect(mockAcceptIntegrity).not.toHaveBeenCalled();
     expect(ServerConfig.createPolicyEngineConfig).toHaveBeenCalledWith(
       expect.objectContaining({
-        workspacePoliciesDir: expect.stringContaining(
-          path.join('.gemini', 'policies'),
-        ),
+        workspacePoliciesDir: undefined,
       }),
       expect.anything(),
     );

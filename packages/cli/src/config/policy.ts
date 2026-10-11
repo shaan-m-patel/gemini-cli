@@ -94,16 +94,11 @@ export async function resolveWorkspacePolicyState(options: {
         newHash: integrityResult.hash,
       };
     } else {
-      // Non-interactive mode: warn and automatically accept/load
-      await integrityManager.acceptIntegrity(
-        'workspace',
-        cwd,
-        integrityResult.hash,
-      );
-      workspacePoliciesDir = potentialWorkspacePoliciesDir;
-      // debugLogger.warn here doesn't show up in the terminal. It is showing up only in debug mode on the debug console
+      // Non-interactive mode cannot show the confirmation dialog. Leave the
+      // previously accepted hash unchanged and do not load the new rules, so
+      // a later interactive session still prompts.
       writeToStderr(
-        'WARNING: Workspace policies changed or are new. Automatically accepting and loading them in non-interactive mode.\n',
+        'WARNING: Workspace policies are new or have changed. They were not loaded. Start an interactive session to review them before they can allow tool calls.\n',
       );
     }
   }
