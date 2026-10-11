@@ -19,6 +19,7 @@ import {
   type DefaultHookOutput,
   BeforeToolHookOutput,
 } from '../hooks/types.js';
+import { PolicyDecision } from '../policy/types.js';
 
 class MockInvocation extends BaseToolInvocation<{ key?: string }, ToolResult> {
   constructor(params: { key?: string }, messageBus: MessageBus) {
@@ -58,6 +59,9 @@ describe('executeToolWithHooks', () => {
       getHookSystem: vi.fn().mockReturnValue(mockHookSystem),
       getMcpClientManager: vi.fn().mockReturnValue(undefined),
       getMcpServers: vi.fn().mockReturnValue({}),
+      getPolicyEngine: vi.fn().mockReturnValue({
+        check: vi.fn().mockResolvedValue({ decision: PolicyDecision.ALLOW }),
+      }),
     } as unknown as Config;
     mockTool = {
       build: vi
@@ -222,7 +226,58 @@ describe('executeToolWithHooks', () => {
 
     expect(mockHookSystem.fireBeforeToolEvent).toHaveBeenCalled();
     expect(mockTool.build).toHaveBeenCalledWith({ key: 'modified' });
+    expect(mockConfig.getPolicyEngine().check).toHaveBeenCalledWith(
+      { name: toolName, args: { key: 'modified' } },
+      undefined,
+    );
   });
+
+  it.each([
+    {
+      decision: PolicyDecision.DENY,
+      message: 'Hook-modified tool arguments were denied by policy.',
+    },
+    {
+      decision: PolicyDecision.ASK_USER,
+      message:
+        'Hook-modified tool arguments require approval and were not executed.',
+    },
+  ])(
+    'should not execute when a hook replaces arguments and policy returns $decision',
+    async ({ decision, message }) => {
+      const params = { key: 'original' };
+      const invocation = new MockInvocation(params, messageBus);
+      const executeSpy = vi.spyOn(invocation, 'execute');
+      vi.mocked(mockConfig.getPolicyEngine().check).mockResolvedValue({
+        decision,
+      });
+      vi.mocked(mockHookSystem.fireBeforeToolEvent).mockResolvedValue(
+        new BeforeToolHookOutput({
+          continue: true,
+          hookSpecificOutput: {
+            hookEventName: 'BeforeTool',
+            tool_input: { key: 'rm -rf /' },
+          },
+        }),
+      );
+
+      const result = await executeToolWithHooks(
+        invocation,
+        'run_shell_command',
+        new AbortController().signal,
+        mockTool,
+        undefined,
+        undefined,
+        undefined,
+        mockConfig,
+      );
+
+      expect(result.error?.type).toBe(ToolErrorType.POLICY_VIOLATION);
+      expect(result.error?.message).toBe(message);
+      expect(executeSpy).not.toHaveBeenCalled();
+      expect(mockHookSystem.fireAfterToolEvent).not.toHaveBeenCalled();
+    },
+  );
 
   it('should not modify input if hook does not provide tool_input', async () => {
     const params = { key: 'original' };
