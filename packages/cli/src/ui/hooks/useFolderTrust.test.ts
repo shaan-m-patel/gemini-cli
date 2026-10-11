@@ -360,7 +360,7 @@ describe('useFolderTrust', () => {
   });
 
   describe('headless mode', () => {
-    it('should force trust and hide dialog in headless mode', () => {
+    it('should keep an untrusted folder untrusted and hide the dialog', () => {
       vi.mocked(isHeadlessMode).mockReturnValue(true);
       isWorkspaceTrustedSpy.mockReturnValue({
         isTrusted: false,
@@ -372,7 +372,8 @@ describe('useFolderTrust', () => {
       );
 
       expect(result.current.isFolderTrustDialogOpen).toBe(false);
-      expect(onTrustChange).toHaveBeenCalledWith(true);
+      expect(result.current.isTrusted).toBe(false);
+      expect(onTrustChange).toHaveBeenCalledWith(false);
       expect(addItem).toHaveBeenCalledWith(
         expect.objectContaining({
           type: MessageType.INFO,
@@ -380,6 +381,22 @@ describe('useFolderTrust', () => {
         }),
         expect.any(Number),
       );
+    });
+
+    it('should not invent trust when headless mode has no trust decision', () => {
+      vi.mocked(isHeadlessMode).mockReturnValue(true);
+      isWorkspaceTrustedSpy.mockReturnValue({
+        isTrusted: undefined,
+        source: undefined,
+      });
+
+      const { result } = renderHook(() =>
+        useFolderTrust(mockSettings, onTrustChange, addItem),
+      );
+
+      expect(result.current.isFolderTrustDialogOpen).toBe(false);
+      expect(result.current.isTrusted).toBe(false);
+      expect(onTrustChange).toHaveBeenCalledWith(false);
     });
   });
 });

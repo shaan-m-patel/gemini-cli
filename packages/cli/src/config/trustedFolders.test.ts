@@ -17,6 +17,7 @@ import {
   loadTrustedFolders,
   TrustLevel,
   isWorkspaceTrusted,
+  formatUntrustedNonInteractiveError,
   resetTrustedFoldersForTesting,
 } from './trustedFolders.js';
 import { loadEnvironment } from './settings.js';
@@ -428,13 +429,39 @@ describe('Trusted Folders', () => {
       },
     };
 
-    it('should return true when isHeadlessMode is true, ignoring config', async () => {
+    it('should honor DO_NOT_TRUST when headless mode is detected', async () => {
       const geminiCore = await import('@google/gemini-cli-core');
       vi.spyOn(geminiCore, 'isHeadlessMode').mockReturnValue(true);
 
-      expect(isWorkspaceTrusted(mockSettings)).toEqual({
-        isTrusted: true,
+      const config = { '/projectA': TrustLevel.DO_NOT_TRUST };
+      fs.writeFileSync(trustedFoldersPath, JSON.stringify(config), 'utf-8');
+
+      expect(isWorkspaceTrusted(mockSettings, '/projectA')).toEqual({
+        isTrusted: false,
+        source: 'file',
+      });
+    });
+
+    it('should stay untrusted in headless mode when no trust rule exists', async () => {
+      const geminiCore = await import('@google/gemini-cli-core');
+      vi.spyOn(geminiCore, 'isHeadlessMode').mockReturnValue(true);
+
+      expect(isWorkspaceTrusted(mockSettings, '/unlisted')).toEqual({
+        isTrusted: undefined,
         source: undefined,
+      });
+    });
+
+    it('should trust a folder in headless mode only when the trust file grants it', async () => {
+      const geminiCore = await import('@google/gemini-cli-core');
+      vi.spyOn(geminiCore, 'isHeadlessMode').mockReturnValue(true);
+
+      const config = { '/projectA': TrustLevel.TRUST_FOLDER };
+      fs.writeFileSync(trustedFoldersPath, JSON.stringify(config), 'utf-8');
+
+      expect(isWorkspaceTrusted(mockSettings, '/projectA')).toEqual({
+        isTrusted: true,
+        source: 'file',
       });
     });
 
@@ -450,12 +477,20 @@ describe('Trusted Folders', () => {
       );
     });
 
-    it('should return true for isPathTrusted when isHeadlessMode is true', async () => {
+    it('should not treat an unlisted path as trusted just because headless mode is on', async () => {
       const geminiCore = await import('@google/gemini-cli-core');
       vi.spyOn(geminiCore, 'isHeadlessMode').mockReturnValue(true);
 
       const folders = loadTrustedFolders();
-      expect(folders.isPathTrusted('/any-untrusted-path')).toBe(true);
+      expect(folders.isPathTrusted('/any-untrusted-path')).toBe(undefined);
+    });
+
+    it('explains how to trust a folder before a non-interactive run', () => {
+      const message = formatUntrustedNonInteractiveError('/projectA');
+      expect(message).toContain('/projectA');
+      expect(message).toContain('TRUST_FOLDER');
+      expect(message).toContain(trustedFoldersPath);
+      expect(message).toContain('/permissions');
     });
   });
 

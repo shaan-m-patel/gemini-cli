@@ -100,6 +100,17 @@ to protect you. In this mode, the following features are disabled:
 Granting trust to a folder unlocks the full functionality of the Gemini CLI for
 that workspace.
 
+## Non-interactive and headless runs
+
+Headless runs (`gemini -p`, a non-TTY stdin or stdout, or `CI=true`) cannot show
+the trust dialog. They do **not** treat the workspace as trusted.
+
+When folder trust is enabled, a non-interactive run loads project settings,
+hooks, MCP servers, `.env` files, and workspace approval modes only if
+`~/.gemini/trustedFolders.json` already grants `TRUST_FOLDER` or `TRUST_PARENT`
+for that path. Otherwise the CLI exits and prints how to add the grant. An
+existing `DO_NOT_TRUST` rule is honored.
+
 ## Managing your trust settings
 
 If you need to change a decision or see all your settings, you have a couple of

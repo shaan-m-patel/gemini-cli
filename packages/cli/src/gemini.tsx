@@ -19,6 +19,7 @@ import { start_sandbox } from './utils/sandbox.js';
 import type { DnsResolutionOrder, LoadedSettings } from './config/settings.js';
 import {
   loadTrustedFolders,
+  formatUntrustedNonInteractiveError,
   type TrustedFoldersError,
 } from './config/trustedFolders.js';
 import { loadSettings, SettingScope } from './config/settings.js';
@@ -440,6 +441,19 @@ export async function main() {
   const partialConfig = await loadCliConfig(settings.merged, sessionId, argv, {
     projectHooks: settings.workspace.settings.hooks,
   });
+
+  // Headless runs cannot prompt. Refuse to continue unless this folder was
+  // already granted trust, so project hooks and MCP servers cannot start.
+  if (
+    !partialConfig.isInteractive() &&
+    partialConfig.getFolderTrust() &&
+    !partialConfig.isTrustedFolder()
+  ) {
+    writeToStderr(`${formatUntrustedNonInteractiveError(process.cwd())}\n`);
+    await runExitCleanup();
+    process.exit(ExitCodes.FATAL_CONFIG_ERROR);
+  }
+
   adminControlsListner.setConfig(partialConfig);
 
   // Refresh auth to fetch remote admin settings from CCPA and before entering
@@ -574,9 +588,8 @@ export async function main() {
     adminControlsListner.setConfig(config);
 
     if (config.isInteractive() && settings.merged.general.devtools) {
-      const { setupInitialActivityLogger } = await import(
-        './utils/devtoolsService.js'
-      );
+      const { setupInitialActivityLogger } =
+        await import('./utils/devtoolsService.js');
       await setupInitialActivityLogger(config);
     }
 

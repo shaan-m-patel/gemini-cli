@@ -15,7 +15,6 @@ import {
   ideContextStore,
   GEMINI_DIR,
   homedir,
-  isHeadlessMode,
   coreEvents,
   type HeadlessModeOptions,
 } from '@google/gemini-cli-core';
@@ -129,11 +128,10 @@ export class LoadedTrustedFolders {
   isPathTrusted(
     location: string,
     config?: Record<string, TrustLevel>,
-    headlessOptions?: HeadlessModeOptions,
+    // Retained so existing callers can pass the detected mode. Headless and
+    // non-interactive runs use the same trust file as interactive runs.
+    _headlessOptions?: HeadlessModeOptions,
   ): boolean | undefined {
-    if (isHeadlessMode(headlessOptions)) {
-      return true;
-    }
     const configToUse = config ?? this.user.config;
 
     // Resolve location to its realpath for canonical comparison
@@ -363,16 +361,28 @@ function getWorkspaceTrustFromLocalConfig(
   };
 }
 
+/**
+ * Explains how to grant trust before a non-interactive run will load project
+ * settings, hooks, MCP servers, or workspace approval modes.
+ */
+export function formatUntrustedNonInteractiveError(
+  workspaceDir: string,
+): string {
+  return (
+    `Refusing to run non-interactively because ${workspaceDir} is not a trusted folder.\n` +
+    'Project settings, hooks, MCP servers, .env files, and workspace approval modes stay disabled until this folder is explicitly trusted.\n' +
+    `Trust it by adding "${workspaceDir}": "TRUST_FOLDER" to ${getTrustedFoldersPath()}, or start an interactive session in this folder and run the /permissions command.`
+  );
+}
+
 export function isWorkspaceTrusted(
   settings: Settings,
   workspaceDir: string = process.cwd(),
   trustConfig?: Record<string, TrustLevel>,
-  headlessOptions?: HeadlessModeOptions,
+  // Retained so existing callers can pass the detected mode. Headless and
+  // non-interactive runs use the same trust file as interactive runs.
+  _headlessOptions?: HeadlessModeOptions,
 ): TrustResult {
-  if (isHeadlessMode(headlessOptions)) {
-    return { isTrusted: true, source: undefined };
-  }
-
   if (!isFolderTrustEnabled(settings)) {
     return { isTrusted: true, source: undefined };
   }
@@ -386,6 +396,6 @@ export function isWorkspaceTrusted(
   return getWorkspaceTrustFromLocalConfig(
     workspaceDir,
     trustConfig,
-    headlessOptions,
+    _headlessOptions,
   );
 }
