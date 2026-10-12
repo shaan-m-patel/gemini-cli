@@ -43,6 +43,7 @@ import {
   debugLogger,
   coreEvents,
   AuthType,
+  ExitCodes,
 } from '@google/gemini-cli-core';
 import { act } from 'react';
 import { type InitializationResult } from './core/initializer.js';
@@ -748,9 +749,8 @@ describe('gemini.tsx main function kitty protocol', () => {
   });
 
   it.skip('should log error when cleanupExpiredSessions fails', async () => {
-    const { cleanupExpiredSessions } = await import(
-      './utils/sessionCleanup.js'
-    );
+    const { cleanupExpiredSessions } =
+      await import('./utils/sessionCleanup.js');
     vi.mocked(cleanupExpiredSessions).mockRejectedValue(
       new Error('Cleanup failed'),
     );
@@ -976,6 +976,35 @@ describe('gemini.tsx main function exit codes', () => {
       expect((e as MockProcessExitError).code).toBe(42);
     } finally {
       delete process.env['GEMINI_API_KEY'];
+    }
+  });
+
+  it('should refuse a non-interactive run in an untrusted folder', async () => {
+    vi.mocked(loadCliConfig).mockResolvedValue(
+      createMockConfig({
+        isInteractive: () => false,
+        getFolderTrust: () => true,
+        isTrustedFolder: () => false,
+        getQuestion: () => 'test prompt',
+      }),
+    );
+    vi.mocked(loadSettings).mockReturnValue(
+      createMockSettings({
+        merged: { security: { auth: {} }, ui: {} },
+      }),
+    );
+    vi.mocked(parseArguments).mockResolvedValue({
+      prompt: 'test prompt',
+    } as unknown as CliArgs);
+
+    try {
+      await main();
+      expect.fail('Should have thrown MockProcessExitError');
+    } catch (e) {
+      expect(e).toBeInstanceOf(MockProcessExitError);
+      expect((e as MockProcessExitError).code).toBe(
+        ExitCodes.FATAL_CONFIG_ERROR,
+      );
     }
   });
 

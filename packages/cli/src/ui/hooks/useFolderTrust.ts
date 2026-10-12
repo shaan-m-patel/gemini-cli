@@ -68,10 +68,14 @@ export const useFolderTrust = (
     };
 
     if (isHeadlessMode()) {
+      // A non-interactive session cannot show the trust dialog. Do not treat
+      // that as a grant: only an existing TRUST_FOLDER / TRUST_PARENT rule
+      // (or an explicit IDE trust signal) may mark the workspace trusted.
       if (isMounted) {
-        setIsTrusted(trusted);
+        const explicitlyTrusted = trusted === true;
+        setIsTrusted(explicitlyTrusted);
         setIsFolderTrustDialogOpen(false);
-        onTrustChange(true);
+        onTrustChange(explicitlyTrusted);
         showUntrustedMessage();
       }
     } else if (isMounted) {
