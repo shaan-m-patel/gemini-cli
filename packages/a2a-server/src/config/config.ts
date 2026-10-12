@@ -42,9 +42,10 @@ export async function loadConfig(
   const workspaceDir = process.cwd();
   const adcFilePath = process.env['GOOGLE_APPLICATION_CREDENTIALS'];
 
-  const folderTrust =
-    settings.folderTrust === true ||
-    process.env['GEMINI_FOLDER_TRUST'] === 'true';
+  // Folder trust stays enabled so an untrusted workspace cannot be treated as
+  // trusted. Only an operator-listed path sets trustedFolder.
+  const operatorTrusted = isOperatorTrustedWorkspace(workspaceDir);
+  const folderTrust = true;
 
   let checkpointing = process.env['CHECKPOINTING']
     ? process.env['CHECKPOINTING'] === 'true'
@@ -101,7 +102,7 @@ export async function loadConfig(
     },
     ideMode: false,
     folderTrust,
-    trustedFolder: true,
+    trustedFolder: operatorTrusted,
     extensionLoader,
     checkpointing,
     interactive: true,
@@ -174,24 +175,118 @@ export async function loadConfig(
   return config;
 }
 
+export class UntrustedWorkspaceError extends Error {
+  constructor(targetDir: string) {
+    super(
+      `Refusing workspace path ${targetDir}. It is not in CODER_AGENT_WORKSPACE_PATH or CODER_AGENT_WORKSPACE_ALLOWLIST.`,
+    );
+    this.name = 'UntrustedWorkspaceError';
+  }
+}
+
+function canonicalPath(target: string): string {
+  const resolved = path.resolve(target);
+  try {
+    return fs.realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+function isFilesystemRoot(target: string): boolean {
+  return path.parse(target).root === target;
+}
+
+function pathsFromEnv(name: string): string[] {
+  const value = process.env[name];
+  if (!value) {
+    return [];
+  }
+  return value
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((entry) => canonicalPath(entry))
+    .filter((entry) => !isFilesystemRoot(entry));
+}
+
+function isSameOrChild(root: string, candidate: string): boolean {
+  if (candidate === root) {
+    return true;
+  }
+  const relative = path.relative(root, candidate);
+  return (
+    relative.length > 0 &&
+    !relative.startsWith('..') &&
+    !path.isAbsolute(relative)
+  );
+}
+
+/**
+ * Paths the operator explicitly allowed the server to enter.
+ * A client-supplied workspace must match one of these.
+ */
+export function allowedWorkspaceRoots(): string[] {
+  return [
+    ...pathsFromEnv('CODER_AGENT_WORKSPACE_PATH'),
+    ...pathsFromEnv('CODER_AGENT_WORKSPACE_ALLOWLIST'),
+  ];
+}
+
+export function isAllowedWorkspace(targetDir: string): boolean {
+  const candidate = canonicalPath(targetDir);
+  if (isFilesystemRoot(candidate)) {
+    return false;
+  }
+  return allowedWorkspaceRoots().some((root) => isSameOrChild(root, candidate));
+}
+
+/**
+ * Paths whose project settings, .env overrides, and MCP servers may load.
+ * The allowlist permits a directory change. Trust is a separate operator list,
+ * plus the single CODER_AGENT_WORKSPACE_PATH.
+ */
+export function isOperatorTrustedWorkspace(workspaceDir: string): boolean {
+  const candidate = canonicalPath(workspaceDir);
+  const trusted = new Set([
+    ...pathsFromEnv('CODER_AGENT_WORKSPACE_PATH'),
+    ...pathsFromEnv('CODER_AGENT_TRUSTED_WORKSPACES'),
+  ]);
+  return trusted.has(candidate);
+}
+
 export function setTargetDir(agentSettings: AgentSettings | undefined): string {
   const originalCWD = process.cwd();
-  const targetDir =
-    process.env['CODER_AGENT_WORKSPACE_PATH'] ??
-    (agentSettings?.kind === CoderAgentEvent.StateAgentSettingsEvent
+  const operatorWorkspace = process.env['CODER_AGENT_WORKSPACE_PATH'];
+  const requested =
+    agentSettings?.kind === CoderAgentEvent.StateAgentSettingsEvent
       ? agentSettings.workspacePath
-      : undefined);
+      : undefined;
 
-  if (!targetDir) {
+  if (requested) {
+    const resolvedPath = canonicalPath(requested);
+    if (!isAllowedWorkspace(resolvedPath)) {
+      throw new UntrustedWorkspaceError(resolvedPath);
+    }
+    logger.info(
+      `[CoderAgentExecutor] Overriding workspace path to: ${resolvedPath}`,
+    );
+    process.chdir(resolvedPath);
+    return resolvedPath;
+  }
+
+  if (!operatorWorkspace) {
     return originalCWD;
   }
 
+  const resolvedPath = canonicalPath(operatorWorkspace);
+  if (!isAllowedWorkspace(resolvedPath)) {
+    throw new UntrustedWorkspaceError(resolvedPath);
+  }
   logger.info(
-    `[CoderAgentExecutor] Overriding workspace path to: ${targetDir}`,
+    `[CoderAgentExecutor] Overriding workspace path to: ${resolvedPath}`,
   );
-
   try {
-    const resolvedPath = path.resolve(targetDir);
     process.chdir(resolvedPath);
     return resolvedPath;
   } catch (e) {
@@ -205,7 +300,9 @@ export function setTargetDir(agentSettings: AgentSettings | undefined): string {
 export function loadEnvironment(): void {
   const envFilePath = findEnvFile(process.cwd());
   if (envFilePath) {
-    dotenv.config({ path: envFilePath, override: true });
+    // Do not let a workspace .env replace PATH, API keys, or other variables
+    // the operator already set.
+    dotenv.config({ path: envFilePath, override: false });
   }
 }
 

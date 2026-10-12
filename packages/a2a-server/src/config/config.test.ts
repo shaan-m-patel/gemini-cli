@@ -78,6 +78,8 @@ describe('loadConfig', () => {
   afterEach(() => {
     delete process.env['CUSTOM_IGNORE_FILE_PATHS'];
     delete process.env['GEMINI_API_KEY'];
+    delete process.env['CODER_AGENT_WORKSPACE_PATH'];
+    delete process.env['CODER_AGENT_TRUSTED_WORKSPACES'];
   });
 
   describe('admin settings overrides', () => {
@@ -248,6 +250,29 @@ describe('loadConfig', () => {
     const config = await loadConfig(mockSettings, mockExtensionLoader, taskId);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((config as any).fileFiltering.customIgnoreFilePaths).toEqual([]);
+  });
+
+  it('should not mark the current workspace trusted unless the operator listed it', async () => {
+    delete process.env['CODER_AGENT_WORKSPACE_PATH'];
+    delete process.env['CODER_AGENT_TRUSTED_WORKSPACES'];
+    await loadConfig(mockSettings, mockExtensionLoader, taskId);
+    expect(Config).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        folderTrust: true,
+        trustedFolder: false,
+      }),
+    );
+  });
+
+  it('should mark the workspace trusted when it is CODER_AGENT_WORKSPACE_PATH', async () => {
+    process.env['CODER_AGENT_WORKSPACE_PATH'] = process.cwd();
+    await loadConfig(mockSettings, mockExtensionLoader, taskId);
+    expect(Config).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        trustedFolder: true,
+      }),
+    );
+    delete process.env['CODER_AGENT_WORKSPACE_PATH'];
   });
 
   it('should initialize FileDiscoveryService with correct options', async () => {
