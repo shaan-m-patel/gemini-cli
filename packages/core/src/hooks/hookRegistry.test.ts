@@ -736,10 +736,12 @@ describe('HookRegistry', () => {
           'WARNING: The following project-level hooks have been detected',
         ),
       );
-      expect(mockTrustedHooksManager.trustHooks).toHaveBeenCalledWith(
-        '/project',
-        projectHooks,
-      );
+      expect(mockTrustedHooksManager.trustHooks).not.toHaveBeenCalled();
+      expect(
+        hookRegistry
+          .getAllHooks()
+          .some((hook) => hook.config.command === './hooks/untrusted.sh'),
+      ).toBe(false);
     });
 
     it('should not warn if hooks are already trusted', async () => {

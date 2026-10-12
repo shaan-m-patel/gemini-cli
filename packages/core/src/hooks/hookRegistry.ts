@@ -29,6 +29,8 @@ export interface HookRegistryEntry {
 export class HookRegistry {
   private readonly config: Config;
   private entries: HookRegistryEntry[] = [];
+  /** Project hooks seen for the first time this session. They stay disabled. */
+  private untrustedProjectHooks = new Set<string>();
 
   constructor(config: Config) {
     this.config = config;
@@ -111,18 +113,15 @@ export class HookRegistry {
       );
 
       if (untrusted.length > 0) {
+        for (const hookName of untrusted) {
+          this.untrustedProjectHooks.add(hookName);
+        }
         const message = `WARNING: The following project-level hooks have been detected in this workspace:
 ${untrusted.map((h) => `  - ${h}`).join('\n')}
 
-These hooks will be executed. If you did not configure these hooks or do not trust this project,
-please review the project settings (.gemini/settings.json) and remove them.`;
+These hooks are disabled until you explicitly trust them. They were not saved as trusted and will not run in this session.
+Review .gemini/settings.json before accepting them.`;
         coreEvents.emitFeedback('warning', message);
-
-        // Trust them so we don't warn again
-        trustedHooksManager.trustHooks(
-          this.config.getProjectRoot(),
-          projectHooks,
-        );
       }
     } catch (error) {
       debugLogger.warn('Failed to check project hooks trust', error);
@@ -231,6 +230,15 @@ please review the project settings (.gemini/settings.json) and remove them.`;
           config: hookConfig,
         } as HookRegistryEntry);
         const isDisabled = disabledHooks.includes(hookName);
+        if (
+          source === ConfigSource.Project &&
+          this.untrustedProjectHooks.has(hookName)
+        ) {
+          debugLogger.warn(
+            `Skipping untrusted project hook "${hookName}" until it is explicitly trusted.`,
+          );
+          continue;
+        }
 
         // Add source to hook config
         hookConfig.source = source;
