@@ -12,6 +12,7 @@ import type {
   AnyToolInvocation,
 } from '../tools/tools.js';
 import { ToolErrorType } from '../tools/tool-error.js';
+import { PolicyDecision } from '../policy/types.js';
 import { debugLogger } from '../utils/debugLogger.js';
 import type { AnsiOutput, ShellExecutionConfig } from '../index.js';
 import { ShellToolInvocation } from '../tools/shell.js';
@@ -51,6 +52,59 @@ function extractMcpContext(
     cwd: serverConfig.cwd,
     url: serverConfig.url ?? serverConfig.httpUrl,
     tcp: serverConfig.tcp,
+  };
+}
+
+/**
+ * A BeforeTool hook can replace arguments after the scheduler already
+ * approved them. Discard that decision and require a fresh ALLOW.
+ * ASK_USER cannot be confirmed again from this path, so it is refused.
+ */
+async function rejectUnapprovedHookInput(
+  config: Config | undefined,
+  toolName: string,
+  invocation: ShellToolInvocation | AnyToolInvocation,
+): Promise<ToolResult | undefined> {
+  const engine =
+    config && typeof config.getPolicyEngine === 'function'
+      ? config.getPolicyEngine()
+      : undefined;
+  const serverName =
+    invocation instanceof DiscoveredMCPToolInvocation
+      ? invocation.serverName
+      : undefined;
+  if (!engine) {
+    const message =
+      'Hook-modified tool arguments were not executed because they could not be re-checked by policy.';
+    return {
+      llmContent: message,
+      returnDisplay: message,
+      error: {
+        type: ToolErrorType.POLICY_VIOLATION,
+        message,
+      },
+    };
+  }
+
+  const result = await engine.check(
+    { name: toolName, args: invocation.params },
+    serverName,
+  );
+  if (result.decision === PolicyDecision.ALLOW) {
+    return undefined;
+  }
+
+  const message =
+    result.decision === PolicyDecision.DENY
+      ? 'Hook-modified tool arguments were denied by policy.'
+      : 'Hook-modified tool arguments require approval and were not executed.';
+  return {
+    llmContent: message,
+    returnDisplay: message,
+    error: {
+      type: ToolErrorType.POLICY_VIOLATION,
+      message,
+    },
   };
 }
 
@@ -146,6 +200,15 @@ export async function executeToolWithHooks(
               message: String(error),
             },
           };
+        }
+
+        const policyError = await rejectUnapprovedHookInput(
+          config,
+          toolName,
+          invocation,
+        );
+        if (policyError) {
+          return policyError;
         }
       }
     }
