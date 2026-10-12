@@ -17,7 +17,11 @@ import { getErrorMessage } from '../utils/errors.js';
 import type { Config } from '../config/config.js';
 import { ApprovalMode } from '../policy/types.js';
 import { getResponseText } from '../utils/partUtils.js';
-import { fetchWithTimeout, isPrivateIp } from '../utils/fetch.js';
+import {
+  fetchPublicUrl,
+  isPrivateIp,
+  resolvesToBlockedAddress,
+} from '../utils/fetch.js';
 import { convert } from 'html-to-text';
 import {
   logWebFetchFallbackAttempt,
@@ -171,7 +175,7 @@ class WebFetchToolInvocation extends BaseToolInvocation<
     try {
       const response = await retryWithBackoff(
         async () => {
-          const res = await fetchWithTimeout(url, URL_FETCH_TIMEOUT_MS);
+          const res = await fetchPublicUrl(url, URL_FETCH_TIMEOUT_MS);
           if (!res.ok) {
             const error = new Error(
               `Request failed with status code ${res.status} ${res.statusText}`,
@@ -307,14 +311,16 @@ ${textContent}
       };
     }
 
-    const isPrivate = isPrivateIp(url);
-
-    if (isPrivate) {
-      logWebFetchFallbackAttempt(
-        this.config,
-        new WebFetchFallbackAttemptEvent('private_ip'),
-      );
-      return this.executeFallback(signal);
+    if (isPrivateIp(url) || (await resolvesToBlockedAddress(url))) {
+      const errorMessage = `Refusing to fetch blocked address ${url}`;
+      return {
+        llmContent: `Error: ${errorMessage}`,
+        returnDisplay: `Error: ${errorMessage}`,
+        error: {
+          message: errorMessage,
+          type: ToolErrorType.WEB_FETCH_PROCESSING_ERROR,
+        },
+      };
     }
 
     const geminiClient = this.config.getGeminiClient();
