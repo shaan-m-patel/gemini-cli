@@ -6,6 +6,8 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs/promises';
+import * as fsSync from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { marked } from 'marked';
 import { processImports, validateImportPath } from './memoryImportProcessor.js';
@@ -696,6 +698,26 @@ describe('memoryImportProcessor', () => {
   });
 
   describe('validateImportPath', () => {
+    it('rejects a symlink whose target is outside the allowed directory', () => {
+      if (process.platform === 'win32') {
+        return;
+      }
+      const root = fsSync.mkdtempSync(
+        path.join(os.tmpdir(), 'gemini-import-'),
+      );
+      const project = path.join(root, 'project');
+      const outside = path.join(root, 'secret.txt');
+      fsSync.mkdirSync(project);
+      fsSync.writeFileSync(outside, 'secret');
+      fsSync.symlinkSync(outside, path.join(project, 'link.md'));
+
+      try {
+        expect(validateImportPath('link.md', project, [project])).toBe(false);
+      } finally {
+        fsSync.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
     it('should reject URLs', () => {
       const basePath = testPath('base');
       const allowedPath = testPath('allowed');
