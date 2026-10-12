@@ -126,7 +126,7 @@ describe('resolveWorkspacePolicyState', () => {
     });
   });
 
-  it('should warn and auto-accept if changed in non-interactive mode', async () => {
+  it('should not accept or load changed policies in non-interactive mode', async () => {
     fs.mkdirSync(policiesDir, { recursive: true });
     fs.writeFileSync(path.join(policiesDir, 'policy.toml'), 'rules = []');
 
@@ -136,10 +136,17 @@ describe('resolveWorkspacePolicyState', () => {
       interactive: false,
     });
 
-    expect(result.workspacePoliciesDir).toBe(policiesDir);
+    expect(result.workspacePoliciesDir).toBeUndefined();
     expect(result.policyUpdateConfirmationRequest).toBeUndefined();
     expect(writeToStderr).toHaveBeenCalledWith(
-      expect.stringContaining('Automatically accepting and loading'),
+      expect.stringContaining('They were not loaded'),
     );
+
+    const second = await resolveWorkspacePolicyState({
+      cwd: workspaceDir,
+      trustedFolder: true,
+      interactive: true,
+    });
+    expect(second.policyUpdateConfirmationRequest).toBeDefined();
   });
 });
