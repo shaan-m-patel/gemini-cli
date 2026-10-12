@@ -4,8 +4,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getFolderStructure } from '../utils/getFolderStructure.js';
+import { isSubpath } from '../utils/paths.js';
 import type { MessageBus } from '../confirmation-bus/message-bus.js';
 import type {
   ToolResult,
@@ -126,11 +128,22 @@ ${folderStructure}`,
 
     skillManager.activateSkill(skillName);
 
+    const skillDir = path.dirname(skill.location);
+    if (!skillDirectoryMayJoinWorkspace(skillDir, this.config)) {
+      const errorMessage = `Skill "${skillName}" resolves outside the workspace and was not added.`;
+      return {
+        llmContent: `Error: ${errorMessage}`,
+        returnDisplay: `Error: ${errorMessage}`,
+        error: {
+          message: errorMessage,
+          type: ToolErrorType.INVALID_TOOL_PARAMS,
+        },
+      };
+    }
+
     // Add the skill's directory to the workspace context so the agent has permission
     // to read its bundled resources.
-    this.config
-      .getWorkspaceContext()
-      .addDirectory(path.dirname(skill.location));
+    this.config.getWorkspaceContext().addDirectory(skillDir);
 
     const folderStructure = await this.getOrFetchFolderStructure(
       skill.location,
@@ -148,6 +161,62 @@ ${folderStructure}`,
 </activated_skill>`,
       returnDisplay: `Skill **${skillName}** activated. Resources loaded from \`${path.dirname(skill.location)}\`:\n\n${folderStructure}`,
     };
+  }
+}
+
+/**
+ * A project skill whose real path leaves the workspace must not become a
+ * workspace root. Skills that already live outside the workspace (user,
+ * extension, builtin) are unchanged unless their own directory is a symlink
+ * to somewhere else.
+ */
+export function skillDirectoryMayJoinWorkspace(
+  skillDir: string,
+  config: Config,
+): boolean {
+  if (!fs.existsSync(skillDir)) {
+    return true;
+  }
+
+  let realSkillDir: string;
+  try {
+    realSkillDir = fs.realpathSync(skillDir);
+  } catch {
+    return false;
+  }
+
+  const roots = config.getWorkspaceContext().getDirectories();
+  const insideWorkspace = roots.some((root) => {
+    try {
+      return isSubpath(fs.realpathSync(root), realSkillDir);
+    } catch {
+      return isSubpath(path.resolve(root), realSkillDir);
+    }
+  });
+  if (insideWorkspace) {
+    return true;
+  }
+
+  // Outside the workspace: allow only a real directory. A symlink, including
+  // one in an ancestor, would add the escaped target as a workspace root.
+  return !pathContainsSymlink(skillDir);
+}
+
+function pathContainsSymlink(candidate: string): boolean {
+  let current = path.resolve(candidate);
+  while (true) {
+    try {
+      if (fs.lstatSync(current).isSymbolicLink()) {
+        return true;
+      }
+    } catch {
+      // A missing component cannot itself be a symlink.
+    }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return false;
+    }
+    current = parent;
   }
 }
 

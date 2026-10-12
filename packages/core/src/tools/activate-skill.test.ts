@@ -5,7 +5,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ActivateSkillTool } from './activate-skill.js';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import {
+  ActivateSkillTool,
+  skillDirectoryMayJoinWorkspace,
+} from './activate-skill.js';
 import type { Config } from '../config/config.js';
 import type { MessageBus } from '../confirmation-bus/message-bus.js';
 import { createMockMessageBus } from '../test-utils/mock-message-bus.js';
@@ -102,6 +108,31 @@ describe('ActivateSkillTool', () => {
     ).getConfirmationDetails(new AbortController().signal);
 
     expect(details).toBe(false);
+  });
+
+  it('rejects a skill symlink that resolves outside the workspace', () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-skill-'));
+    const project = path.join(root, 'project');
+    const outside = path.join(root, 'outside');
+    fs.mkdirSync(project);
+    fs.mkdirSync(outside);
+    const link = path.join(project, 'evil-skill');
+    fs.symlinkSync(outside, link);
+    const config = {
+      getWorkspaceContext: () => ({
+        getDirectories: () => [fs.realpathSync(project)],
+      }),
+    } as unknown as Config;
+
+    try {
+      expect(skillDirectoryMayJoinWorkspace(link, config)).toBe(false);
+      expect(skillDirectoryMayJoinWorkspace(outside, config)).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('should activate a valid skill and return its content in XML tags', async () => {
